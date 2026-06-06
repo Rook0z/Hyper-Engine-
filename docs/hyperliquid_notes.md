@@ -1,5 +1,4 @@
 # Hyperliquid API Notes
-> **Hyper-Engine — Day 1, Phase 1**
 > Source: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api
 
 ---
