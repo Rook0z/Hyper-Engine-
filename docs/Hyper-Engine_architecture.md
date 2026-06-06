@@ -77,7 +77,9 @@ from .hyperliquid_auth import HyperliquidAuth
 auth = HyperliquidAuth(private_key=..., account_address=...)
 signed_body = auth(action={"type": "order", ...}, nonce=nonce)
 # signed_body = { "action": {...}, "nonce": 123456789, "signature": { "r": ..., "s": ..., "v": 27 } }
+```
 
+---
 ### `hyperliquid_client.py`
 **Job:** One job only — **make HTTP requests** to `/info` and `/exchange`. Nothing else.
 
