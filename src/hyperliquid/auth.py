@@ -1,23 +1,3 @@
-# src/hyperliquid/auth.py
-# Hyperliquid Authentication & Request Signing
-#
-# How it works (plain English):
-# ─────────────────────────────
-# Hyperliquid is a blockchain. Your identity is an Ethereum wallet.
-# Instead of API key + secret, you prove who you are by cryptographically
-# signing every request with your wallet's private key.
-#
-# Two signing schemes exist:
-#   1. sign_l1_action()          → trading actions (order, cancel)
-#   2. sign_user_signed_action() → user actions (withdraw, transfer, approveAgent)
-#
-# L1 action signing flow:
-#   action dict → msgpack serialize → keccak256 hash → "phantom agent" → EIP-712 sign
-#
-# The phantom agent is just a small dict {"source": "a", "connectionId": <hash>}
-# that acts as a temporary proxy identity for your action.
-# "source" = "a" for mainnet, "b" for testnet.
-
 import time
 from typing import Any
 
