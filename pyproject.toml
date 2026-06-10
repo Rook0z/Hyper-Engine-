@@ -12,6 +12,7 @@ eth-account = {version = "^0.13.7", python = ">=3.12,<4"}
 msgpack = {version = "^1.1.2", python = ">=3.12,<4"}
 httpx = {version = "^0.28.1", python = ">=3.12,<4"}
 python-dotenv = {version = "^1.2.2", python = ">=3.12,<4"}
+pydantic = "^2.13.4"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"
