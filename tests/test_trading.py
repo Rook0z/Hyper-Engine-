@@ -51,6 +51,7 @@ def mock_symbol_map():
     sm.get_perp_asset_id.side_effect = get_perp_asset_id
     return sm
 
+
 @pytest.fixture
 def trading(mock_client, mock_symbol_map):
     return HyperliquidTrading(client=mock_client, symbol_map=mock_symbol_map)

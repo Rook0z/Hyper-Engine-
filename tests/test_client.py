@@ -173,3 +173,84 @@ def test_raises_network_error_on_connection_failure(client):
     with patch("httpx.post", side_effect=httpx.ConnectError("connection refused")):
         with pytest.raises(NetworkError, match="Connection failed"):
             client.info({"type": "meta"})
+
+
+def test_retries_on_network_error(auth):
+    """Client must retry on NetworkError up to max_retries times."""
+    client = HyperliquidClient(auth=auth, max_retries=2, base_delay=0.01)
+    mock_response = make_mock_response(500, {"error": "server error"})
+    mock_response.text = "server error"
+
+    with patch("httpx.post", return_value=mock_response):
+        with patch("time.sleep") as mock_sleep:
+            with pytest.raises(NetworkError):
+                client.info({"type": "meta"})
+            # Should have slept twice (2 retries = 2 sleeps before giving up)
+            assert mock_sleep.call_count == 2
+
+
+def test_retries_on_rate_limit(auth):
+    """Client must retry on RateLimitError."""
+    client = HyperliquidClient(auth=auth, max_retries=2, base_delay=0.01)
+    mock_response = make_mock_response(429, {"error": "rate limited"})
+
+    with patch("httpx.post", return_value=mock_response):
+        with patch("time.sleep") as mock_sleep:
+            with pytest.raises(RateLimitError):
+                client.info({"type": "meta"})
+            assert mock_sleep.call_count == 2
+
+
+def test_no_retry_on_4xx(auth):
+    """Client must NOT retry on 4xx API errors."""
+    client = HyperliquidClient(auth=auth, max_retries=3, base_delay=0.01)
+    mock_response = make_mock_response(400, {"error": "bad request"})
+
+    with patch("httpx.post", return_value=mock_response):
+        with patch("time.sleep") as mock_sleep:
+            with pytest.raises(APIError):
+                client.info({"type": "meta"})
+            # No sleep — 4xx should not be retried
+            assert mock_sleep.call_count == 0
+
+
+def test_succeeds_on_retry_after_failure(auth):
+    """Client must succeed if a retry attempt succeeds."""
+    client = HyperliquidClient(auth=auth, max_retries=2, base_delay=0.01)
+
+    fail_response = make_mock_response(500, {"error": "server error"})
+    fail_response.text = "server error"
+    success_response = make_mock_response(200, {"status": "ok"})
+
+    with patch("httpx.post", side_effect=[fail_response, success_response]):
+        with patch("time.sleep"):
+            result = client.info({"type": "meta"})
+            assert result == {"status": "ok"}
+
+
+def test_backoff_delay_doubles(auth):
+    """Backoff delay must double each attempt."""
+    client = HyperliquidClient(auth=auth, max_retries=3, base_delay=1.0, max_delay=60.0)
+    assert client._backoff_delay(0) == 1.0
+    assert client._backoff_delay(1) == 2.0
+    assert client._backoff_delay(2) == 4.0
+    assert client._backoff_delay(3) == 8.0
+
+
+def test_backoff_delay_capped_at_max(auth):
+    """Backoff delay must not exceed max_delay."""
+    client = HyperliquidClient(auth=auth, max_retries=10, base_delay=1.0, max_delay=5.0)
+    assert client._backoff_delay(10) == 5.0
+
+
+def test_zero_retries_raises_immediately(auth):
+    """With max_retries=0, should fail on first attempt with no sleep."""
+    client = HyperliquidClient(auth=auth, max_retries=0, base_delay=0.01)
+    mock_response = make_mock_response(500, {"error": "server error"})
+    mock_response.text = "server error"
+
+    with patch("httpx.post", return_value=mock_response):
+        with patch("time.sleep") as mock_sleep:
+            with pytest.raises(NetworkError):
+                client.info({"type": "meta"})
+            assert mock_sleep.call_count == 0

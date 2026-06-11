@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -10,9 +11,13 @@ logger = logging.getLogger(__name__)
 TESTNET_URL = "https://api.hyperliquid-testnet.xyz"
 MAINNET_URL = "https://api.hyperliquid.xyz"
 
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_BASE_DELAY = 1.0
+DEFAULT_MAX_DELAY = 30.0
+
 
 class APIError(Exception):
-    """Raised when the API returns a 4xx error."""
+    """Raised when the API returns a 4xx error. Not retried."""
 
     def __init__(self, status_code: int, message: str) -> None:
         self.status_code = status_code
@@ -21,11 +26,11 @@ class APIError(Exception):
 
 
 class RateLimitError(APIError):
-    """Raised when the API returns 429 Too Many Requests."""
+    """Raised when the API returns 429 Too Many Requests. Retried with backoff."""
 
 
 class NetworkError(Exception):
-    """Raised on 5xx errors or connection failures — eligible for retry."""
+    """Raised on 5xx errors or connection failures. Retried with backoff."""
 
 
 class HyperliquidClient:
@@ -33,20 +38,21 @@ class HyperliquidClient:
     HTTP client for the Hyperliquid REST API.
 
     Args:
-        auth:     HyperliquidAuth instance for signing exchange requests.
-                  Pass None for info-only usage (no trading).
-        base_url: API base URL. Defaults to testnet — always testnet first.
-        timeout:  Request timeout in seconds. Default 10.
+        auth:        HyperliquidAuth instance for signing exchange requests.
+                     Pass None for info-only usage (no trading).
+        base_url:    API base URL. Defaults to testnet — always testnet first.
+        timeout:     Request timeout in seconds. Default 10.
+        max_retries: Max retry attempts for NetworkError and RateLimitError.
+                     Default 3. Set to 0 to disable retries.
+        base_delay:  Initial backoff delay in seconds. Doubles each retry.
+                     Default 1.0s → retries at 1s, 2s, 4s.
+        max_delay:   Maximum backoff delay cap in seconds. Default 30.0.
 
-    Usage:
-        auth = HyperliquidAuth(private_key=..., account_address=...)
-        client = HyperliquidClient(auth=auth)
-
-        # Read data — no signing
-        state = client.info({"type": "clearinghouseState", "user": "0x..."})
-
-        # Write data — auto-signed
-        result = client.exchange({"type": "order", ...})
+    Retry behaviour:
+        Attempt 1 fails → wait 1s  → attempt 2
+        Attempt 2 fails → wait 2s  → attempt 3
+        Attempt 3 fails → wait 4s  → attempt 4 (last if max_retries=3)
+        All attempts fail → raises the last exception
     """
 
     def __init__(
@@ -54,38 +60,45 @@ class HyperliquidClient:
         auth: HyperliquidAuth | None = None,
         base_url: str = TESTNET_URL,
         timeout: float = 10.0,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        base_delay: float = DEFAULT_BASE_DELAY,
+        max_delay: float = DEFAULT_MAX_DELAY,
     ) -> None:
         self.auth = auth
         self.base_url = base_url
         self.timeout = timeout
+        self.max_retries = max_retries
+        self.base_delay = base_delay
+        self.max_delay = max_delay
 
     # ──────────────────────────────────────────────────────────────
     # PUBLIC METHODS
     # ──────────────────────────────────────────────────────────────
 
-    def info(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def info(self, payload: dict[str, Any]) -> Any:
         """
         POST to /info — read-only, no signature required.
 
         Args:
             payload: Request body. Must contain a "type" field.
-                     Example: {"type": "clearinghouseState", "user": "0x..."}
 
         Returns:
-            Parsed JSON response as a dict.
+            Parsed JSON response — dict or list depending on endpoint.
         """
         logger.debug("INFO request: %s", payload.get("type"))
-        return self._post("/info", payload)
+        return self._post_with_retry("/info", payload)
 
-    def exchange(self, action: dict[str, Any]) -> dict[str, Any]:
+    def exchange(
+        self,
+        action: dict[str, Any],
+        vault_address: str | None = None,
+    ) -> dict[str, Any]:
         """
         POST to /exchange — write operations, must be signed.
 
-        Calls self.auth(action) to build the signed request body,
-        then POSTs it to /exchange.
-
         Args:
-            action: The action dict. Example: {"type": "order", "asset": 0, ...}
+            action:        The action dict. Example: {"type": "order", ...}
+            vault_address: Optional vault/subaccount address.
 
         Returns:
             Parsed JSON response as a dict.
@@ -99,19 +112,89 @@ class HyperliquidClient:
                 "Pass auth=HyperliquidAuth(...) when creating the client."
             )
 
-        signed_body = self.auth(action)
+        signed_body = self.auth(action, vault_address=vault_address)
         logger.debug("EXCHANGE request: %s", action.get("type"))
-        return self._post("/exchange", signed_body)
+        return self._post_with_retry("/exchange", signed_body)
+
+    # ──────────────────────────────────────────────────────────────
+    # RETRY LOGIC
+    # ──────────────────────────────────────────────────────────────
+
+    def _post_with_retry(self, endpoint: str, body: dict[str, Any]) -> Any:
+        """
+        Wraps _post() with exponential backoff retry logic.
+
+        Retries on: NetworkError, RateLimitError
+        Does NOT retry on: APIError (4xx except 429)
+
+        Backoff: delay = min(base_delay * 2^attempt, max_delay)
+        e.g. base_delay=1: 1s, 2s, 4s... capped at max_delay
+        """
+        last_exception: Exception | None = None
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                return self._post(endpoint, body)
+
+            except RateLimitError as e:
+                last_exception = e
+                if attempt == self.max_retries:
+                    break
+                delay = self._backoff_delay(attempt)
+                logger.warning(
+                    "Rate limited (429) on %s — retry %d/%d in %.1fs",
+                    endpoint,
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+
+            except NetworkError as e:
+                last_exception = e
+                if attempt == self.max_retries:
+                    break
+                delay = self._backoff_delay(attempt)
+                logger.warning(
+                    "Network error on %s: %s — retry %d/%d in %.1fs",
+                    endpoint,
+                    e,
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
+                )
+                time.sleep(delay)
+
+            except APIError:
+                raise  # 4xx — don't retry
+
+        logger.error(
+            "All %d retries exhausted for %s — last error: %s",
+            self.max_retries,
+            endpoint,
+            last_exception,
+        )
+        raise last_exception  # type: ignore
+
+    def _backoff_delay(self, attempt: int) -> float:
+        """
+        Exponential backoff delay.
+
+        attempt=0 → base_delay * 1
+        attempt=1 → base_delay * 2
+        attempt=2 → base_delay * 4
+        Capped at max_delay.
+        """
+        return min(self.base_delay * (2**attempt), self.max_delay)
 
     # ──────────────────────────────────────────────────────────────
     # PRIVATE METHODS
     # ──────────────────────────────────────────────────────────────
 
-    def _post(self, endpoint: str, body: dict[str, Any]) -> dict[str, Any]:
+    def _post(self, endpoint: str, body: dict[str, Any]) -> Any:
         """
-        Base POST method. Handles headers, timeout, error handling, logging.
-
-        All requests go through here — info and exchange both use this.
+        Single HTTP POST attempt. No retry logic here.
+        Retry lives in _post_with_retry().
         """
         url = self.base_url + endpoint
         headers = {"Content-Type": "application/json"}
@@ -129,17 +212,16 @@ class HyperliquidClient:
             raise NetworkError(f"Connection failed to {url}: {e}") from e
 
         logger.debug("Response %s from %s", response.status_code, endpoint)
-
         return self._handle_response(response)
 
-    def _handle_response(self, response: httpx.Response) -> dict[str, Any]:
+    def _handle_response(self, response: httpx.Response) -> Any:
         """
-        Parses the response and raises the right error for each status code.
+        Parses response and raises typed errors per status code.
 
         200 → return parsed JSON
-        429 → RateLimitError
-        4xx → APIError
-        5xx → NetworkError
+        429 → RateLimitError (retried by _post_with_retry)
+        4xx → APIError (not retried)
+        5xx → NetworkError (retried)
         """
         if response.status_code == 200:
             try:
@@ -150,7 +232,7 @@ class HyperliquidClient:
                 ) from e
 
         if response.status_code == 429:
-            raise RateLimitError(429, "Rate limited — wait before retrying")
+            raise RateLimitError(429, "Rate limited — backing off")
 
         if 400 <= response.status_code < 500:
             try:
