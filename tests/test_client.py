@@ -254,3 +254,23 @@ def test_zero_retries_raises_immediately(auth):
             with pytest.raises(NetworkError):
                 client.info({"type": "meta"})
             assert mock_sleep.call_count == 0
+
+
+def test_handle_response_unknown_status_raises(auth):
+    client = HyperliquidClient(auth=auth, max_retries=0)
+    mock_response = make_mock_response(302, {})
+    mock_response.text = "redirect"
+    with patch("httpx.post", return_value=mock_response):
+        with pytest.raises(APIError) as exc:
+            client.info({"type": "meta"})
+        assert exc.value.status_code == 302
+
+
+def test_all_retries_exhausted_raises_last_exception(auth):
+    client = HyperliquidClient(auth=auth, max_retries=2, base_delay=0.01)
+    mock_response = make_mock_response(500, {"error": "server error"})
+    mock_response.text = "server error"
+    with patch("httpx.post", return_value=mock_response):
+        with patch("time.sleep"):
+            with pytest.raises(NetworkError):
+                client.info({"type": "meta"})

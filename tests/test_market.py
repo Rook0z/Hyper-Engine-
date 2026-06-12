@@ -92,3 +92,33 @@ def test_get_meta_returns_model(market, mock_client):
     }
     meta = market.get_meta()
     assert meta.universe[0].name == "BTC"
+
+
+def test_get_price_missing_from_all_mids_raises(market, mock_client):
+    mock_client.info.return_value = {"ETH": "3000.0"}  # BTC missing
+    with pytest.raises(KeyError):
+        market.get_price("BTC")
+
+
+def test_get_funding_rate(market, mock_client):
+    mock_client.info.return_value = [
+        {"universe": [{"name": "BTC", "szDecimals": 5, "maxLeverage": 50}]},
+        [
+            {
+                "funding": "0.0001",
+                "openInterest": "1000",
+                "premium": "0.0002",
+                "oraclePx": "50000",
+                "markPx": "50001",
+            }
+        ],
+    ]
+    result = market.get_funding_rate("BTC")
+    assert result["symbol"] == "BTC"
+    assert result["funding"] == "0.0001"
+
+
+def test_get_spot_meta(market, mock_client):
+    mock_client.info.return_value = {"universe": [{"name": "PURR/USDC", "index": 0}]}
+    spot = market.get_spot_meta()
+    assert spot.universe[0].name == "PURR/USDC"

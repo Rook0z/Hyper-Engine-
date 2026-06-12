@@ -199,3 +199,54 @@ def test_place_batch_orders(trading, mock_client):
     assert len(action["orders"]) == 2
     assert action["orders"][0]["a"] == 0  # BTC
     assert action["orders"][1]["a"] == 1  # ETH
+
+
+def test_place_batch_orders_with_cloid(trading, mock_client):
+    orders = [
+        {
+            "symbol": "BTC",
+            "is_buy": True,
+            "price": "50000.0",
+            "size": "0.001",
+            "cloid": "0x1234567890abcdef1234567890abcdef",
+        }
+    ]
+    trading.place_batch_orders(orders)
+    action = mock_client.exchange.call_args[0][0]
+    assert action["orders"][0]["c"] == "0x1234567890abcdef1234567890abcdef"
+
+
+def test_modify_order(trading, mock_client):
+    trading.modify_order("BTC", oid=123, price="51000.0", size="0.002", is_buy=True)
+    action = mock_client.exchange.call_args[0][0]
+    assert action["type"] == "modify"
+    assert action["oid"] == 123
+    assert action["order"]["p"] == "51000.0"
+    assert action["order"]["s"] == "0.002"
+
+
+def test_cancel_all_orders_for_symbol(trading, mock_client):
+    mock_client.auth.account_address = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+    mock_client.info.return_value = [
+        {
+            "coin": "BTC",
+            "oid": 1,
+            "side": "B",
+            "limitPx": "50000",
+            "sz": "0.001",
+            "timestamp": 123,
+        },
+    ]
+    mock_client.exchange.return_value = {"status": "ok"}
+    results = trading.cancel_all_orders(symbol="BTC")
+    assert len(results) == 1
+    action = mock_client.exchange.call_args[0][0]
+    assert action["type"] == "cancel"
+    assert action["cancels"][0]["o"] == 1
+
+
+def test_cancel_all_orders_empty(trading, mock_client):
+    mock_client.auth.account_address = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+    mock_client.info.return_value = []
+    results = trading.cancel_all_orders()
+    assert results == []

@@ -152,3 +152,31 @@ def test_get_fills_with_start_time(account, mock_client):
     account.get_fills(start_time=1700000000000)
     payload = mock_client.info.call_args[0][0]
     assert payload["startTime"] == 1700000000000
+
+
+def test_get_spot_balances(account, mock_client):
+    mock_client.info.return_value = {
+        "balances": [{"coin": "USDC", "hold": "0", "total": "100"}]
+    }
+    result = account.get_spot_balances()
+    payload = mock_client.info.call_args[0][0]
+    assert payload["type"] == "spotClearinghouseState"
+    assert "balances" in result
+
+
+def test_get_funding_history(account, mock_client):
+    mock_client.info.return_value = [
+        {"time": 1234, "coin": "BTC", "fundingRate": "0.0001", "usdc": "0.5"}
+    ]
+    result = account.get_funding_history(start_time=1700000000000)
+    payload = mock_client.info.call_args[0][0]
+    assert payload["type"] == "userFunding"
+    assert payload["startTime"] == 1700000000000
+    assert len(result) == 1
+
+
+def test_get_funding_history_with_end_time(account, mock_client):
+    mock_client.info.return_value = []
+    account.get_funding_history(start_time=1700000000000, end_time=1800000000000)
+    payload = mock_client.info.call_args[0][0]
+    assert payload["endTime"] == 1800000000000
