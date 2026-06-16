@@ -11,7 +11,7 @@ that any professional developer could pick up and understand.
 Seven modules. One job each. 100+ tests. 98% coverage.
 
 This is the foundation every other phase builds on.
-If this breaks, everything breaks. That's why you built it carefully.
+If this breaks, everything breaks. That's why I built it carefully.
 
 ---
 
@@ -45,7 +45,7 @@ Signs every request you send to Hyperliquid.
 
 ### Why signing exists
 Hyperliquid is a blockchain. There is no login system, no sessions, no API keys
-the way Binance or Bitget work. Your identity IS your Ethereum wallet address.
+the way Binance or Bitget work. Your identity is your Ethereum wallet address.
 When you want to place an order, you prove it's you by signing the request
 with your wallet's private key. The blockchain can then verify the signature
 and confirm the request came from you — without you ever sending your private key.
@@ -285,7 +285,7 @@ All write operations. All signed via `client.exchange()`.
 
 ### The order action structure
 Every order sent to Hyperliquid has this shape:
-```python
+```
 {
     "type": "order",
     "orders": [{
