@@ -33,7 +33,7 @@ def fetch_close_prices(
         o = open price (string)
         h = high price (string)
         l = low price (string)
-        c = close price (string)  ← this is what we want
+        c = close price (string)
         v = volume (string)
         n = number of trades
 
