@@ -73,7 +73,9 @@ class EMAStrategy(BaseStrategy):
         if len(closes) < self.min_periods:
             logger.debug(
                 "%s: not enough data (%d/%d) — HOLD",
-                self.name, len(closes), self.min_periods
+                self.name,
+                len(closes),
+                self.min_periods,
             )
             return self.HOLD
 
@@ -98,7 +100,9 @@ class EMAStrategy(BaseStrategy):
         if fast_prev <= slow_prev and fast_curr > slow_curr:
             logger.debug(
                 "%s: BUY signal — fast=%.4f crossed above slow=%.4f",
-                self.name, fast_curr, slow_curr
+                self.name,
+                fast_curr,
+                slow_curr,
             )
             return self.BUY
 
@@ -106,7 +110,9 @@ class EMAStrategy(BaseStrategy):
         if fast_prev >= slow_prev and fast_curr < slow_curr:
             logger.debug(
                 "%s: SELL signal — fast=%.4f crossed below slow=%.4f",
-                self.name, fast_curr, slow_curr
+                self.name,
+                fast_curr,
+                slow_curr,
             )
             return self.SELL
 
