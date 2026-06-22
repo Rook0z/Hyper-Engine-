@@ -45,6 +45,7 @@ class EMAStrategy(BaseStrategy):
 
         self.fast_period = fast_period
         self.slow_period = slow_period
+        self._last_crossover: str = self.HOLD
 
     @property
     def name(self) -> str:
@@ -79,37 +80,34 @@ class EMAStrategy(BaseStrategy):
             )
             return self.HOLD
 
-        # Calculate full EMA series for both periods
         fast_ema = calculate_ema(closes, self.fast_period)
         slow_ema = calculate_ema(closes, self.slow_period)
 
-        # Need last two non-None values to detect a crossover
-        # Current bar: last value
-        # Previous bar: second to last value
         fast_curr = fast_ema[-1]
         fast_prev = fast_ema[-2]
         slow_curr = slow_ema[-1]
         slow_prev = slow_ema[-2]
 
-        # If any value is None — not enough data for slow EMA yet
         if any(v is None for v in [fast_curr, fast_prev, slow_curr, slow_prev]):
             return self.HOLD
 
-        # Detect crossover
-        # BUY: fast was at or below slow, now above
-        if fast_prev <= slow_prev and fast_curr > slow_curr:
+        crossed_up = fast_prev <= slow_prev and fast_curr > slow_curr
+        crossed_down = fast_prev >= slow_prev and fast_curr < slow_curr
+
+        if crossed_up and self._last_crossover != self.BUY:
+            self._last_crossover = self.BUY
             logger.debug(
-                "%s: BUY signal — fast=%.4f crossed above slow=%.4f",
+                "%s: BUY — fast=%.4f crossed above slow=%.4f",
                 self.name,
                 fast_curr,
                 slow_curr,
             )
             return self.BUY
 
-        # SELL: fast was at or above slow, now below
-        if fast_prev >= slow_prev and fast_curr < slow_curr:
+        if crossed_down and self._last_crossover != self.SELL:
+            self._last_crossover = self.SELL
             logger.debug(
-                "%s: SELL signal — fast=%.4f crossed below slow=%.4f",
+                "%s: SELL — fast=%.4f crossed below slow=%.4f",
                 self.name,
                 fast_curr,
                 slow_curr,

@@ -20,11 +20,11 @@ load_dotenv()
 # ──────────────────────────────────────────────────────────────
 
 SYMBOL = "BTC"
-INTERVAL = "5m"
+INTERVAL = "1h"
 CANDLE_LIMIT = 50  # how many candles to feed strategy
-FAST_EMA = 3  # fast EMA period
-SLOW_EMA = 8  # slow EMA period
-POSITION_SIZE = 0.01  # per trade
+FAST_EMA = 9  # fast EMA period
+SLOW_EMA = 21  # slow EMA period
+POSITION_SIZE = 0.001  # per trade
 SLEEP_SECONDS = 60  # seconds between checks (60 = check every minute)
 IS_MAINNET = False
 RUN_DURATION_S = 2 * 60 * 60  # 2 hours in seconds
@@ -68,7 +68,7 @@ class LiveRunner:
                 "HL_PRIVATE_KEY and HL_ACCOUNT_ADDRESS must be set in .env"
             )
 
-        # Phase 1 — Hyperliquid client
+        # Hyperliquid client
         self.auth = HyperliquidAuth(
             private_key=private_key,
             account_address=account_address,
@@ -84,7 +84,7 @@ class LiveRunner:
         self.symbol_map = HyperliquidSymbol(client=self.client)
         self.symbol_map.load()
 
-        # Phase 2 — data, strategy, risk
+        # data, strategy, risk
         self.ohlcv = OHLCVProvider(client=self.client)
         self.strategy = EMAStrategy(fast_period=FAST_EMA, slow_period=SLOW_EMA)
         self.risk = RiskManager(
@@ -156,7 +156,7 @@ class LiveRunner:
 
     def _tick(self) -> None:
         """One iteration of the trading loop."""
-        # 1. Fetch candles
+        # Fetch candles
         candles = self.ohlcv.fetch(SYMBOL, interval=INTERVAL, limit=CANDLE_LIMIT)
         if not candles:
             logger.warning("No candles returned — skipping tick.")
@@ -166,7 +166,7 @@ class LiveRunner:
         current_price = closes[-1]
         logger.info("Price: %.2f | In position: %s", current_price, self.in_position)
 
-        # 2. Get strategy signal
+        # Get strategy signal
         signal = self.strategy.generate_signal(closes)
 
         # Get EMA values for logging context
@@ -189,7 +189,7 @@ class LiveRunner:
             f"{slow_ema:.2f}" if slow_ema else "N/A",
         )
 
-        # 3. Act on signal
+        # Act on signal
         if signal == "BUY" and not self.in_position:
             self._enter_long(current_price)
 
