@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-import math
-import time as _time
 import logging
+import math
 from typing import Any
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────────────────────
-# DATA FETCHING — pulls real price data from Hyperliquid
+# DATA FETCHING
 # ──────────────────────────────────────────────────────────────
 
 
@@ -21,39 +22,12 @@ def fetch_close_prices(
     end_time: int | None = None,
     limit: int = 100,
 ) -> list[float]:
-    """
-    Fetches closing prices for a symbol from Hyperliquid.
+    """Fetches closing prices from Hyperliquid candleSnapshot endpoint."""
+    import time as _time
 
-    Uses the candleSnapshot endpoint which returns OHLCV candles.
-    We extract the close price from each candle.
-
-    Candle response fields:
-        t = open time (ms)
-        T = close time (ms)
-        o = open price (string)
-        h = high price (string)
-        l = low price (string)
-        c = close price (string)
-        v = volume (string)
-        n = number of trades
-
-    Args:
-        client:     HyperliquidClient instance
-        symbol:     e.g. "BTC", "ETH"
-        interval:   candle interval — "1m", "5m", "15m", "1h", "4h", "1d"
-        start_time: start timestamp in milliseconds (optional)
-        end_time:   end timestamp in milliseconds (optional)
-        limit:      number of candles to fetch (max 5000 per API call)
-
-    Returns:
-        List of close prices as floats, oldest first.
-    """
-
-    # Default: last `limit` hours of 1h candles
     if end_time is None:
         end_time = int(_time.time() * 1000)
     if start_time is None:
-        # Go back enough candles based on interval
         interval_ms = {
             "1m": 60_000,
             "3m": 180_000,
@@ -79,251 +53,118 @@ def fetch_close_prices(
             "endTime": end_time,
         },
     }
-
     raw = client.info(payload)
-
     if not raw:
         logger.warning("No candles returned for %s %s", symbol, interval)
         return []
-
     prices = [float(candle["c"]) for candle in raw]
-    logger.debug(
-        "Fetched %d close prices for %s (%s) — range: %.2f to %.2f",
-        len(prices),
-        symbol,
-        interval,
-        min(prices),
-        max(prices),
-    )
+    logger.debug("Fetched %d close prices for %s (%s)", len(prices), symbol, interval)
     return prices
 
 
 # ──────────────────────────────────────────────────────────────
-# CORE STATISTICS — built from formula
+# CORE STATISTICS
 # ──────────────────────────────────────────────────────────────
 
 
 def mean(values: list[float]) -> float:
     """
-    Arithmetic mean — the average value.
-
-    Formula: sum(values) / n
-
-    In trading: average return, average price, average fill size.
-
-    Args:
-        values: list of numbers
-
-    Returns:
-        The mean as a float.
-
-    Raises:
-        ValueError: if values is empty
+    Arithmetic mean using numpy.
+    numpy: np.mean(arr)
     """
     if not values:
         raise ValueError("Cannot calculate mean of empty list.")
-    return sum(values) / len(values)
+    return float(np.mean(np.array(values, dtype=np.float64)))
 
 
 def variance(values: list[float], population: bool = False) -> float:
     """
-    Variance — measures how spread out values are from the mean.
-
-    Formula:
-        Population variance:  sum((x - mean)^2) / n
-        Sample variance:      sum((x - mean)^2) / (n - 1)
-
-    We use sample variance (population=False) by default because in trading
-    we always have a sample of returns, never the full population.
-    Dividing by (n-1) instead of n corrects for the bias in a sample
-    (Bessel's correction).
-
-    In trading: variance of returns measures risk.
-    Higher variance = more volatile = riskier.
-
-    Args:
-        values:     list of numbers
-        population: if True use population variance (/ n), else sample (/ n-1)
-
-    Returns:
-        Variance as a float.
-
-    Raises:
-        ValueError: if values has fewer than 2 elements (sample variance needs n-1 >= 1)
+    Variance using numpy.
+    ddof=0 → population (divide by n)
+    ddof=1 → sample (divide by n-1) — default, correct for trading
+    numpy: np.var(arr, ddof=1)
     """
     if len(values) < 2:
         raise ValueError("Variance requires at least 2 values.")
-
-    m = mean(values)
-    squared_diffs = [(x - m) ** 2 for x in values]
-    divisor = len(values) if population else len(values) - 1
-    return sum(squared_diffs) / divisor
+    arr = np.array(values, dtype=np.float64)
+    ddof = 0 if population else 1
+    return float(np.var(arr, ddof=ddof))
 
 
 def std(values: list[float], population: bool = False) -> float:
     """
-    Standard deviation — square root of variance.
-
-    Formula: sqrt(variance(values))
-
-    Standard deviation is in the same units as the original data,
-    which makes it more interpretable than variance.
-
+    Standard deviation using numpy.
+    numpy: np.std(arr, ddof=1)
     In trading: std of returns = volatility.
-    If BTC daily returns have std = 3%, then on any given day
-    you can roughly expect the price to move ±3% from its mean.
-
-    The Sharpe ratio uses std to normalize returns by risk:
-        Sharpe = mean_return / std_return
-
-    Args:
-        values:     list of numbers
-        population: passed through to variance()
-
-    Returns:
-        Standard deviation as a float.
     """
-    return math.sqrt(variance(values, population=population))
+    if len(values) < 2:
+        raise ValueError("Std requires at least 2 values.")
+    arr = np.array(values, dtype=np.float64)
+    ddof = 0 if population else 1
+    return float(np.std(arr, ddof=ddof))
 
 
 def expected_value(outcomes: list[float], probabilities: list[float]) -> float:
     """
-    Expected value — probability-weighted average outcome.
-
-    Formula: sum(outcome_i * probability_i)
-
-    In trading: expected value of a strategy =
-        (win_rate * avg_win) + ((1 - win_rate) * avg_loss)
-
-    A positive expected value means the strategy makes money on average.
-    A negative expected value means it loses money on average.
-    No amount of risk management saves a negative EV strategy long-term.
-
-    Args:
-        outcomes:      list of possible outcomes (e.g. [100.0, -50.0])
-        probabilities: list of probabilities for each outcome (must sum to 1.0)
-
-    Returns:
-        Expected value as a float.
-
-    Raises:
-        ValueError: if lengths don't match or probabilities don't sum to ~1.0
+    Expected value using numpy dot product.
+    np.dot(outcomes, probabilities) = sum(outcome_i * probability_i)
+    dot product is exactly the EV formula — multiply then sum.
     """
     if len(outcomes) != len(probabilities):
         raise ValueError(
             f"outcomes and probabilities must have same length. "
             f"Got {len(outcomes)} and {len(probabilities)}."
         )
-    if not math.isclose(sum(probabilities), 1.0, abs_tol=1e-6):
+    prob_arr = np.array(probabilities, dtype=np.float64)
+    if not math.isclose(float(np.sum(prob_arr)), 1.0, abs_tol=1e-6):
         raise ValueError(
-            f"Probabilities must sum to 1.0. Got {sum(probabilities):.6f}."
+            f"Probabilities must sum to 1.0. Got {float(np.sum(prob_arr)):.6f}."
         )
-    return sum(o * p for o, p in zip(outcomes, probabilities))
+    out_arr = np.array(outcomes, dtype=np.float64)
+    return float(np.dot(out_arr, prob_arr))
 
 
 def win_rate(pnl_list: list[float]) -> float:
     """
-    Fraction of trades that were profitable.
-
-    Formula: winning_trades / total_trades
-
-    In trading: a strategy with win_rate = 0.6 wins 60% of trades.
-    But win rate alone means nothing — a strategy with 90% win rate
-    that loses 10x on the losers still loses money overall.
-    Always pair win rate with profit factor or expected value.
-
-    Args:
-        pnl_list: list of per-trade PnL values (positive = win, negative = loss)
-
-    Returns:
-        Win rate as float between 0.0 and 1.0
-
-    Raises:
-        ValueError: if pnl_list is empty
+    Win rate using numpy boolean mask.
+    np.sum(arr > 0) counts winning trades efficiently.
     """
     if not pnl_list:
         raise ValueError("Cannot calculate win rate of empty list.")
-    wins = sum(1 for pnl in pnl_list if pnl > 0)
-    return wins / len(pnl_list)
+    arr = np.array(pnl_list, dtype=np.float64)
+    return float(np.sum(arr > 0) / len(arr))
 
 
 def profit_factor(pnl_list: list[float]) -> float:
     """
-    Ratio of gross profit to gross loss.
-
-    Formula: sum(winning_trades) / abs(sum(losing_trades))
-
-    Interpretation:
-        profit_factor > 1.0 → strategy is profitable
-        profit_factor = 1.0 → break even
-        profit_factor < 1.0 → losing strategy
-        profit_factor = 2.0 → for every $1 lost, $2 is made
-
-    A good strategy typically has profit_factor > 1.5.
-    Combined with win_rate, gives a full picture of strategy quality.
-
-    Args:
-        pnl_list: list of per-trade PnL values
-
-    Returns:
-        Profit factor as float.
-
-    Raises:
-        ValueError: if no losing trades (division by zero)
+    Gross profit / gross loss using numpy boolean masking.
+    arr[arr > 0] extracts only winning trades.
+    arr[arr < 0] extracts only losing trades.
     """
     if not pnl_list:
         raise ValueError("Cannot calculate profit factor of empty list.")
-
-    gross_profit = sum(pnl for pnl in pnl_list if pnl > 0)
-    gross_loss = abs(sum(pnl for pnl in pnl_list if pnl < 0))
-
+    arr = np.array(pnl_list, dtype=np.float64)
+    gross_profit = float(np.sum(arr[arr > 0]))
+    gross_loss = float(np.abs(np.sum(arr[arr < 0])))
     if gross_loss == 0:
-        if gross_profit > 0:
-            return float("inf")  # all trades profitable — infinite profit factor
-        raise ValueError("No losing trades and no winning trades.")
-
+        return float("inf") if gross_profit > 0 else 0.0
     return gross_profit / gross_loss
 
 
 def max_drawdown(equity_curve: list[float]) -> float:
     """
-    Maximum peak-to-trough decline in the equity curve.
+    Max drawdown using np.maximum.accumulate.
 
-    Formula:
-        For each point, find the maximum loss from any previous peak.
-        max_drawdown = max((peak - trough) / peak) across all points.
-
-    In trading: max drawdown is the worst loss streak.
-    If you start with $10,000 and it drops to $7,000, max drawdown = 30%.
-
-    Critical for risk management:
-        - Most traders set a max drawdown limit (e.g. stop trading at -20%)
-        - Investors use max drawdown to evaluate strategy risk
-        - Lower max drawdown with same returns = better risk-adjusted performance
-
-    Args:
-        equity_curve: list of portfolio values over time (e.g. [10000, 10500, 9800, ...])
-
-    Returns:
-        Max drawdown as a positive float (e.g. 0.30 = 30% drawdown)
-
-    Raises:
-        ValueError: if equity_curve has fewer than 2 values
+    np.maximum.accumulate tracks the running peak at each point.
+    (peak - value) / peak gives the drawdown at each point.
+    np.max gives the worst drawdown across the whole curve.
     """
     if len(equity_curve) < 2:
         raise ValueError("Equity curve requires at least 2 values.")
-
-    peak = equity_curve[0]
-    max_dd = 0.0
-
-    for value in equity_curve[1:]:
-        if value > peak:
-            peak = value
-        drawdown = (peak - value) / peak
-        if drawdown > max_dd:
-            max_dd = drawdown
-
-    return max_dd
+    arr = np.array(equity_curve, dtype=np.float64)
+    peak = np.maximum.accumulate(arr)
+    drawdowns = (peak - arr) / peak
+    return float(np.max(drawdowns))
 
 
 def sharpe_ratio(
@@ -332,71 +173,96 @@ def sharpe_ratio(
     periods_per_year: int = 252,
 ) -> float:
     """
-    Risk-adjusted return — return per unit of risk.
-
-    Formula: (mean_return - risk_free_rate) / std_return * sqrt(periods_per_year)
-
-    Interpretation:
-        Sharpe > 2.0 → excellent
-        Sharpe > 1.0 → good
-        Sharpe > 0.5 → acceptable
-        Sharpe < 0   → worse than risk-free
-
-    The sqrt(periods_per_year) annualizes the ratio:
-        Daily returns:  periods_per_year = 252 (trading days)
-        Hourly returns: periods_per_year = 252 * 24 = 6048
-        Minute returns: periods_per_year = 252 * 24 * 60
-
-    Args:
-        returns:          list of period returns (e.g. [0.01, -0.005, 0.02, ...])
-        risk_free_rate:   annualized risk-free rate (default 0.0 for crypto)
-        periods_per_year: trading periods in a year (default 252 for daily)
-
-    Returns:
-        Annualized Sharpe ratio as float.
-
-    Raises:
-        ValueError: if returns has fewer than 2 values or std is zero
+    Sharpe ratio using numpy.
+    (mean - rf_per_period) / std * sqrt(periods)
+    Returns 0.0 if not enough data or std is zero.
     """
     if len(returns) < 2:
-        raise ValueError("Sharpe ratio requires at least 2 return values.")
-
-    m = mean(returns)
-    s = std(returns)
-
+        return 0.0
+    arr = np.array(returns, dtype=np.float64)
+    m = float(np.mean(arr))
+    s = float(np.std(arr, ddof=1))
     if s == 0:
-        raise ValueError("Standard deviation is zero — all returns are identical.")
-
-    # Convert annualized risk-free rate to per-period
+        return 0.0
     period_rf = risk_free_rate / periods_per_year
-
     return (m - period_rf) / s * math.sqrt(periods_per_year)
 
 
-# ──────────────────────────────────────────────────────────────
-# CONVENIENCE — run all stats on a price series at once
-# ──────────────────────────────────────────────────────────────
-
-
 def describe(values: list[float]) -> dict[str, float]:
-    """
-    Returns a summary of all basic statistics for a list of values.
-
-    Args:
-        values: list of numbers (e.g. close prices or returns)
-
-    Returns:
-        Dict with: count, mean, variance, std, min, max, range
-    """
+    """Summary statistics using numpy — all computed in one array pass."""
     if not values:
         raise ValueError("Cannot describe empty list.")
-
+    arr = np.array(values, dtype=np.float64)
     return {
-        "count": len(values),
-        "mean": mean(values),
-        "variance": variance(values),
-        "std": std(values),
-        "min": min(values),
-        "max": max(values),
-        "range": max(values) - min(values),
+        "count": float(len(arr)),
+        "mean": float(np.mean(arr)),
+        "variance": float(np.var(arr, ddof=1)),
+        "std": float(np.std(arr, ddof=1)),
+        "min": float(np.min(arr)),
+        "max": float(np.max(arr)),
+        "range": float(np.max(arr) - np.min(arr)),
     }
+
+
+# ──────────────────────────────────────────────────────────────
+# NEW — RETURNS & ROLLING
+# ──────────────────────────────────────────────────────────────
+
+
+def pct_returns(prices: list[float]) -> np.ndarray:
+    """
+    Percentage returns using np.diff.
+    Formula: (price[i] - price[i-1]) / price[i-1]
+    numpy:   np.diff(arr) / arr[:-1]
+    Returns array of length len(prices) - 1.
+    """
+    if len(prices) < 2:
+        raise ValueError("Need at least 2 prices to calculate returns.")
+    arr = np.array(prices, dtype=np.float64)
+    return np.diff(arr) / arr[:-1]
+
+
+def log_returns(prices: list[float]) -> np.ndarray:
+    """
+    Log returns using np.diff(np.log(arr)).
+    Formula: ln(price[i] / price[i-1])
+    Returns array of length len(prices) - 1.
+    """
+    if len(prices) < 2:
+        raise ValueError("Need at least 2 prices to calculate log returns.")
+    arr = np.array(prices, dtype=np.float64)
+    return np.diff(np.log(arr))
+
+
+def rolling_mean(values: list[float], window: int) -> np.ndarray:
+    """
+    Rolling mean (SMA) using np.convolve.
+    A uniform kernel convolved with the data gives the rolling average.
+    First (window-1) values are np.nan — not enough data yet.
+    """
+    if window < 1:
+        raise ValueError(f"window must be >= 1, got {window}")
+    if window > len(values):
+        raise ValueError(f"window ({window}) cannot exceed data length ({len(values)})")
+    arr = np.array(values, dtype=np.float64)
+    result = np.full(len(arr), np.nan)
+    kernel = np.ones(window) / window
+    result[window - 1 :] = np.convolve(arr, kernel, mode="valid")
+    return result
+
+
+def rolling_std(values: list[float], window: int) -> np.ndarray:
+    """
+    Rolling standard deviation using numpy slicing.
+    First (window-1) values are np.nan.
+    Used for Bollinger Bands and volatility analysis.
+    """
+    if window < 2:
+        raise ValueError(f"window must be >= 2 for std, got {window}")
+    if window > len(values):
+        raise ValueError(f"window ({window}) cannot exceed data length ({len(values)})")
+    arr = np.array(values, dtype=np.float64)
+    result = np.full(len(arr), np.nan)
+    for i in range(window - 1, len(arr)):
+        result[i] = float(np.std(arr[i - window + 1 : i + 1], ddof=1))
+    return result
