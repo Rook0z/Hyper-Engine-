@@ -41,7 +41,7 @@ class HyperliquidSymbol:
         Fetches meta and spotMeta from the API and builds lookup maps.
 
         Makes exactly 2 HTTP calls. Must be called once before any lookups.
-        Call again to refresh if you suspect the universe has changed.
+        Call again to refresh if suspect the universe has changed.
         """
         self._load_perps()
         self._load_spot()

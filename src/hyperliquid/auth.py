@@ -232,11 +232,8 @@ class HyperliquidAuth:
         vault_address: str | None = None,
     ) -> dict[str, Any]:
         """
-        Builds a complete signed request body ready to POST to /exchange.
-
-        This is the convenience method — it generates the nonce, signs the action,
-        and assembles the full request body in one call.
-
+        Builds a signed request body ready to POST to /exchange.
+        
         Usage:
             auth = HyperliquidAuth(private_key=..., account_address=...)
             body = auth(action={"type": "order", ...})

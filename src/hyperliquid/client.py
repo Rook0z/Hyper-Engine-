@@ -128,7 +128,6 @@ class HyperliquidClient:
         Does NOT retry on: APIError (4xx except 429)
 
         Backoff: delay = min(base_delay * 2^attempt, max_delay)
-        e.g. base_delay=1: 1s, 2s, 4s... capped at max_delay
         """
         last_exception: Exception | None = None
 

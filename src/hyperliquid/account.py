@@ -14,7 +14,7 @@ class HyperliquidAccount:
     Reads account state from Hyperliquid.
 
     All methods are read-only — they use /info (no signing).
-    You must pass the master account address, NOT the API wallet address.
+    Pass the master account address, NOT the API wallet address.
     Using the API wallet address returns empty results (common pitfall).
 
     Args:

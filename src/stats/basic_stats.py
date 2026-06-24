@@ -95,7 +95,6 @@ def std(values: list[float], population: bool = False) -> float:
     """
     Standard deviation using numpy.
     numpy: np.std(arr, ddof=1)
-    In trading: std of returns = volatility.
     """
     if len(values) < 2:
         raise ValueError("Std requires at least 2 values.")

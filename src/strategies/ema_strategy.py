@@ -53,8 +53,6 @@ class EMAStrategy(BaseStrategy):
 
     @property
     def min_periods(self) -> int:
-        # Need slow_period closes to seed the slow EMA,
-        # plus 1 more to have a "previous" bar to detect the crossover
         return self.slow_period + 1
 
     def generate_signal(self, closes: list[float]) -> str:

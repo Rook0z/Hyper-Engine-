@@ -66,10 +66,7 @@ def calculate_ema(
 def ema_latest(closes: list[float], period: int) -> float:
     """
     Returns only the most recent EMA value.
-
-    Convenience function for live trading — you usually only need
-    the current EMA value, not the full history.
-
+    
     Args:
         closes: List of close prices, oldest first.
         period: EMA period.

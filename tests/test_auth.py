@@ -71,8 +71,6 @@ def test_nonces_are_unique(auth):
     """Two nonces generated back to back should not be equal."""
     n1 = auth.generate_nonce()
     n2 = auth.generate_nonce()
-    # In practice they may be equal if called in the same ms —
-    # but the important thing is they're both valid timestamps
     assert isinstance(n1, int)
     assert isinstance(n2, int)
 

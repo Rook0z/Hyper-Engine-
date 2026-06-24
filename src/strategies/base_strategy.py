@@ -3,19 +3,7 @@ from abc import ABC, abstractmethod
 
 
 class BaseStrategy(ABC):
-    """
-    Abstract base class for all Hyper-Engine trading strategies.
-
-    Every strategy must:
-    1. Inherit from BaseStrategy
-    2. Implement generate_signal()
-    3. Never place orders directly — signal only
-
-    The execution engine calls generate_signal() and decides what to do.
-    The strategy just says what it sees.
-    """
-
-    # Valid signal values — nothing else is allowed
+    
     BUY = "BUY"
     SELL = "SELL"
     HOLD = "HOLD"
@@ -40,7 +28,7 @@ class BaseStrategy(ABC):
     @property
     @abstractmethod
     def name(self) -> str:
-        """Human-readable name for this strategy. e.g. 'EMA Crossover 9/21'"""
+        """Human-readable name for this strategy.'"""
 
     @property
     @abstractmethod
