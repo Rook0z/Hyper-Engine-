@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+
+import numpy as np
+import pandas as pd
 
 from strategies.base_strategy import BaseStrategy
 
@@ -16,18 +18,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Trade:
-    """
-    Represents one completed round-trip trade (buy → sell).
-
-    Attributes:
-        entry_time:  timestamp of entry candle (ms)
-        exit_time:   timestamp of exit candle (ms)
-        entry_price: fill price on entry (with slippage)
-        exit_price:  fill price on exit (with slippage)
-        size:        position size in base currency (e.g. 0.001 BTC)
-        pnl:         profit or loss in quote currency (e.g. USDC)
-        pnl_pct:     profit or loss as percentage of entry value
-    """
+    """One completed round-trip trade (buy → sell)."""
 
     entry_time: int
     exit_time: int
@@ -40,21 +31,7 @@ class Trade:
 
 @dataclass
 class BacktestResult:
-    """
-    Full result of a backtest run.
-
-    Attributes:
-        trades:          list of all completed trades
-        total_pnl:       sum of all trade PnLs
-        win_rate:        fraction of trades that were profitable
-        profit_factor:   gross profit / gross loss
-        max_drawdown:    largest peak-to-trough equity decline (as fraction)
-        num_trades:      total number of completed trades
-        equity_curve:    portfolio value after each trade
-        strategy_name:   name of the strategy that was tested
-        symbol:          asset that was tested
-        candles_tested:  number of candles in the backtest
-    """
+    """Full result of a backtest run."""
 
     trades: list[Trade] = field(default_factory=list)
     total_pnl: float = 0.0
@@ -86,14 +63,14 @@ class BacktestResult:
 
 class Backtester:
     """
-    Simulates a strategy on historical OHLCV data.
+    Simulates a strategy on historical OHLCV data using pandas.
 
     Args:
-        strategy:     Any strategy that inherits from BaseStrategy
-        initial_capital: Starting portfolio value in USDC (default 10000)
-        position_size:   Size of each trade in base currency (default 0.001 BTC)
-        slippage_pct:    Slippage as fraction of fill price (default 0.001 = 0.1%)
-        symbol:          Asset being tested (for reporting only)
+        strategy:        Any strategy inheriting from BaseStrategy
+        initial_capital: Starting portfolio value in USDC
+        position_size:   Size of each trade in base currency
+        slippage_pct:    Slippage as fraction of fill price
+        symbol:          Asset being tested
 
     Usage:
         strategy = EMAStrategy(fast_period=9, slow_period=21)
@@ -119,177 +96,223 @@ class Backtester:
 
     def run(self, candles: list[list]) -> BacktestResult:
         """
-        Runs the backtest on a list of OHLCV candles.
+        Runs the backtest on a list of OHLCV candles using pandas.
+
+        Flow:
+            1. Convert candles to DataFrame
+            2. Generate signals for every row using rolling window
+            3. Shift signals forward by 1 bar (next-bar execution)
+            4. Walk through signals to build trade list
+            5. Compute metrics from trade list
 
         Args:
             candles: List of [timestamp, open, high, low, close, volume]
-                     Must be sorted oldest → newest.
-                     Minimum: strategy.min_periods + 1 candles.
+                     Sorted oldest → newest.
 
         Returns:
-            BacktestResult with all trades and performance metrics.
-
-        Notes:
-            - Signal is generated using closes up to candle[i]
-            - Trade is filled at candle[i+1]'s open (next bar execution)
-            - Last candle cannot generate a filled trade (no next bar)
+            BacktestResult with all trades and metrics.
         """
         if len(candles) < 2:
-            logger.warning("Not enough candles to backtest — need at least 2.")
+            logger.warning("Not enough candles — need at least 2.")
             return BacktestResult(
                 strategy_name=self.strategy.name,
                 symbol=self.symbol,
                 candles_tested=len(candles),
             )
 
-        trades: list[Trade] = []
-        equity = self.initial_capital
-        equity_curve: list[float] = [equity]
+        df = self._build_dataframe(candles)
 
-        in_position = False
-        entry_price: float = 0.0
-        entry_time: int = 0
+        df = self._generate_signals(df)
 
-        closes: list[float] = []
+        df["exec_signal"] = df["signal"].shift(1)
+        df["fill_price"] = df["open"]
 
-        # Walk through candles one by one — simulate live trading
-        for i, candle in enumerate(candles):
-            timestamp = candle[0]
-            open_price = candle[1]
-            close_price = candle[4]
+        trades = self._simulate_trades(df)
 
-            closes.append(close_price)
+        result = self._build_result(trades, len(candles))
 
-            # Cannot trade on the last candle — no next bar to fill on
-            if i == len(candles) - 1:
-                break
-
-            # Get signal using all closes up to and including this candle
-            signal = self.strategy.generate_signal(closes)
-
-            # Next candle's open is our fill price
-            next_open = candles[i + 1][1]
-            next_time = candles[i + 1][0]
-
-            if signal == BaseStrategy.BUY and not in_position:
-                # Enter long — buy at next open with slippage
-                entry_price = self._apply_slippage(next_open, is_buy=True)
-                entry_time = next_time
-                in_position = True
-                logger.debug(
-                    "BUY at %.2f (candle %d, time %d)", entry_price, i + 1, entry_time
-                )
-
-            elif signal == BaseStrategy.SELL and in_position:
-                # Exit long — sell at next open with slippage
-                exit_price = self._apply_slippage(next_open, is_buy=False)
-                exit_time = next_time
-
-                trade = self._record_trade(
-                    entry_time,
-                    exit_time,
-                    entry_price,
-                    exit_price,
-                )
-                trades.append(trade)
-                equity += trade.pnl
-                equity_curve.append(equity)
-
-                in_position = False
-                logger.debug(
-                    "SELL at %.2f (candle %d) — PnL: %+.2f",
-                    exit_price,
-                    i + 1,
-                    trade.pnl,
-                )
-
-        # Force close any open position at last candle's close
-        if in_position and len(candles) > 0:
-            last_candle = candles[-1]
-            exit_price = self._apply_slippage(last_candle[4], is_buy=False)
-            trade = self._record_trade(
-                entry_time,
-                last_candle[0],
-                entry_price,
-                exit_price,
-            )
-            trades.append(trade)
-            equity += trade.pnl
-            equity_curve.append(equity)
-            logger.debug("Force closed at %.2f — PnL: %+.2f", exit_price, trade.pnl)
-
-        result = self._build_result(trades, equity_curve, len(candles))
         logger.info(
-            "Backtest complete: %d trades, total PnL: %+.2f, win rate: %.1%%",
+            "Backtest complete: %d trades, PnL: %+.2f, win rate: %.1%%",
             result.num_trades,
             result.total_pnl,
             result.win_rate * 100,
         )
         return result
 
-    # ──────────────────────────────────────────────────────────────
-    # PRIVATE HELPERS
-    # ──────────────────────────────────────────────────────────────
-
-    def _apply_slippage(self, price: float, is_buy: bool) -> float:
+    def summary_by_day(self, result: BacktestResult) -> pd.DataFrame:
         """
-        Applies slippage to a fill price.
+        Returns a DataFrame with daily PnL, trade count, and win rate.
+        Useful for spotting patterns.
 
-        Buys fill slightly above the quoted price (you pay more).
-        Sells fill slightly below the quoted price (you receive less).
+        Args:
+            result: BacktestResult from run()
 
-        This makes backtests more realistic — in live trading you
-        rarely fill at exactly the quoted price.
+        Returns:
+            DataFrame with columns: date, num_trades, total_pnl, win_rate
         """
-        if is_buy:
-            return price * (1 + self.slippage_pct)
-        return price * (1 - self.slippage_pct)
+        if not result.trades:
+            return pd.DataFrame(columns=["date", "num_trades", "total_pnl", "win_rate"])
 
-    def _record_trade(
-        self,
-        entry_time: int,
-        exit_time: int,
-        entry_price: float,
-        exit_price: float,
-    ) -> Trade:
-        """Creates a Trade record with PnL calculated."""
-        pnl = (exit_price - entry_price) * self.position_size
-        pnl_pct = (exit_price - entry_price) / entry_price
-        return Trade(
-            entry_time=entry_time,
-            exit_time=exit_time,
-            entry_price=entry_price,
-            exit_price=exit_price,
-            size=self.position_size,
-            pnl=pnl,
-            pnl_pct=pnl_pct,
+        records = [
+            {
+                "date": pd.to_datetime(t.entry_time, unit="ms").date(),
+                "pnl": t.pnl,
+                "win": 1 if t.pnl > 0 else 0,
+            }
+            for t in result.trades
+        ]
+        trades_df = pd.DataFrame(records)
+
+        daily = (
+            trades_df.groupby("date")
+            .agg(
+                num_trades=("pnl", "count"),
+                total_pnl=("pnl", "sum"),
+                win_rate=("win", "mean"),
+            )
+            .reset_index()
         )
+
+        return daily
+
+    def equity_as_series(self, result: BacktestResult) -> pd.Series:
+        """
+        Returns the equity curve as a pandas Series for resampling.
+
+        Useful for plotting or resampling to weekly/monthly performance.
+
+        Args:
+            result: BacktestResult from run()
+
+        Returns:
+            pd.Series with equity values indexed by trade number.
+        """
+        return pd.Series(result.equity_curve, name="equity")
+
+    # ──────────────────────────────────────────────────────────────
+    # PRIVATE
+    # ──────────────────────────────────────────────────────────────
+
+    def _build_dataframe(self, candles: list[list]) -> pd.DataFrame:
+        """
+        Converts raw OHLCV candles to a pandas DataFrame.
+
+        Columns: timestamp, open, high, low, close, volume
+        Index:   RangeIndex (0, 1, 2, ...)
+        """
+        df = pd.DataFrame(
+            candles,
+            columns=["timestamp", "open", "high", "low", "close", "volume"],
+        )
+        df["timestamp"] = df["timestamp"].astype(np.int64)
+        df[["open", "high", "low", "close", "volume"]] = df[
+            ["open", "high", "low", "close", "volume"]
+        ].astype(np.float64)
+        return df
+
+    def _generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        For each row i, collects closes[0:i+1] and calls
+        strategy.generate_signal(). The result is stored in df["signal"].
+
+        signal values: "BUY", "SELL", "HOLD"
+        """
+        closes = df["close"].tolist()
+        signals = []
+
+        for i in range(len(closes)):
+            signal = self.strategy.generate_signal(closes[: i + 1])
+            signals.append(signal)
+
+        df["signal"] = signals
+        return df
+
+    def _simulate_trades(self, df: pd.DataFrame) -> list[Trade]:
+        """
+        Simulates trades based on execution signals.
+
+        Uses df.itertuples() — faster than iterrows() for row iteration.
+        Slippage applied at fill: buys fill above, sells fill below.
+
+        Position state:
+            in_position = False → look for BUY
+            in_position = True  → look for SELL
+        """
+        trades: list[Trade] = []
+        in_position = False
+        entry_price = 0.0
+        entry_time = 0
+
+        for row in df.itertuples():
+            exec_signal = getattr(row, "exec_signal", None)
+            fill_price = row.fill_price
+            ts = row.timestamp
+
+            if pd.isna(exec_signal):
+                continue
+
+            if exec_signal == BaseStrategy.BUY and not in_position:
+                entry_price = fill_price * (1 + self.slippage_pct)
+                entry_time = ts
+                in_position = True
+
+            elif exec_signal == BaseStrategy.SELL and in_position:
+                exit_price = fill_price * (1 - self.slippage_pct)
+                pnl = (exit_price - entry_price) * self.position_size
+                pnl_pct = (exit_price - entry_price) / entry_price
+
+                trades.append(
+                    Trade(
+                        entry_time=int(entry_time),
+                        exit_time=int(ts),
+                        entry_price=entry_price,
+                        exit_price=exit_price,
+                        size=self.position_size,
+                        pnl=pnl,
+                        pnl_pct=pnl_pct,
+                    )
+                )
+                in_position = False
+
+        if in_position and len(df) > 0:
+            last = df.iloc[-1]
+            exit_price = float(last["close"]) * (1 - self.slippage_pct)
+            pnl = (exit_price - entry_price) * self.position_size
+            pnl_pct = (exit_price - entry_price) / entry_price
+            trades.append(
+                Trade(
+                    entry_time=int(entry_time),
+                    exit_time=int(last["timestamp"]),
+                    entry_price=entry_price,
+                    exit_price=exit_price,
+                    size=self.position_size,
+                    pnl=pnl,
+                    pnl_pct=pnl_pct,
+                )
+            )
+
+        return trades
 
     def _build_result(
         self,
         trades: list[Trade],
-        equity_curve: list[float],
         candles_tested: int,
     ) -> BacktestResult:
-        """Computes all summary statistics from completed trades."""
         if not trades:
             return BacktestResult(
                 strategy_name=self.strategy.name,
                 symbol=self.symbol,
                 candles_tested=candles_tested,
-                equity_curve=equity_curve,
+                equity_curve=[self.initial_capital],
             )
 
-        pnl_list = [t.pnl for t in trades]
-        total_pnl = sum(pnl_list)
+        pnl_arr = np.array([t.pnl for t in trades], dtype=np.float64)
 
-        wins = [p for p in pnl_list if p > 0]
-        losses = [p for p in pnl_list if p < 0]
+        total_pnl = float(np.sum(pnl_arr))
+        win_rate = float(np.sum(pnl_arr > 0) / len(pnl_arr))
 
-        win_rate = len(wins) / len(trades)
-
-        gross_profit = sum(wins)
-        gross_loss = abs(sum(losses)) if losses else 0.0
+        gross_profit = float(np.sum(pnl_arr[pnl_arr > 0]))
+        gross_loss = float(np.abs(np.sum(pnl_arr[pnl_arr < 0])))
         profit_factor = (
             gross_profit / gross_loss
             if gross_loss > 0
@@ -298,7 +321,14 @@ class Backtester:
             else 0.0
         )
 
-        max_dd = self._calculate_max_drawdown(equity_curve)
+        equity_curve = [self.initial_capital] + list(
+            self.initial_capital + np.cumsum(pnl_arr)
+        )
+
+        eq_arr = np.array(equity_curve, dtype=np.float64)
+        peak = np.maximum.accumulate(eq_arr)
+        drawdowns = (peak - eq_arr) / peak
+        max_dd = float(np.max(drawdowns))
 
         return BacktestResult(
             trades=trades,
@@ -314,15 +344,8 @@ class Backtester:
         )
 
     def _calculate_max_drawdown(self, equity_curve: list[float]) -> float:
-        """Maximum peak-to-trough decline in equity curve."""
         if len(equity_curve) < 2:
             return 0.0
-        peak = equity_curve[0]
-        max_dd = 0.0
-        for value in equity_curve[1:]:
-            if value > peak:
-                peak = value
-            dd = (peak - value) / peak
-            if dd > max_dd:
-                max_dd = dd
-        return max_dd
+        arr = np.array(equity_curve, dtype=np.float64)
+        peak = np.maximum.accumulate(arr)
+        return float(np.max((peak - arr) / peak))
