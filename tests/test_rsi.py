@@ -205,21 +205,33 @@ def test_rsi_latest_not_enough_data_raises():
 
 
 def test_wilder_smoother_than_simple_average():
-    """
-    Wilder smoothing reacts more slowly than simple average.
-    After a sudden spike up, Wilder RSI should be lower than
-    a simple-average RSI would be.
-    This tests that the smoothing is actually applied correctly.
-    """
-    # Flat then spike
-    flat = [100.0] * 15
-    spike = flat + [200.0] * 5
-
-    rsi_vals = calculate_rsi(spike, period=14)
+    """Wilder smoothing — test with mixed data so avg_loss > 0."""
+    # Mix of up and down bars so avg_loss is never zero
+    prices = [
+        100.0,
+        102.0,
+        98.0,
+        103.0,
+        99.0,
+        104.0,
+        100.0,
+        105.0,
+        101.0,
+        106.0,
+        102.0,
+        107.0,
+        103.0,
+        108.0,
+        104.0,
+        # Now spike up
+        120.0,
+        130.0,
+        140.0,
+        150.0,
+        160.0,
+    ]
+    rsi_vals = calculate_rsi(prices, period=14)
     non_none = [v for v in rsi_vals if v is not None]
-
-    # After the spike, RSI should rise but not instantly hit 100
-    # Wilder smoothing means it takes time to reach extreme values
     last = non_none[-1]
-    assert last > 50.0  # higher than neutral (spike is upward)
-    assert last < 100.0  # but not instantly 100 — Wilder smoothing at work
+    assert last > 50.0  # spike pulled RSI up
+    assert last < 100.0  # but Wilder smoothing — not instantly 100

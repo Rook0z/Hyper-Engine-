@@ -95,7 +95,7 @@ def test_get_meta_returns_model(market, mock_client):
 
 
 def test_get_price_missing_from_all_mids_raises(market, mock_client):
-    mock_client.info.return_value = {"ETH": "3000.0"}  
+    mock_client.info.return_value = {"ETH": "3000.0"}
     with pytest.raises(KeyError):
         market.get_price("BTC")
 

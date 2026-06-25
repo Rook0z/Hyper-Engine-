@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 
 
 class BaseStrategy(ABC):
-    
     BUY = "BUY"
     SELL = "SELL"
     HOLD = "HOLD"

@@ -16,14 +16,14 @@ from core.trade_logger import TradeLogger
 load_dotenv()
 
 # ──────────────────────────────────────────────────────────────
-# CONFIGURATION 
+# CONFIGURATION
 # ──────────────────────────────────────────────────────────────
 
 SYMBOL = "BTC"
 INTERVAL = "1h"
-CANDLE_LIMIT = 50  
-FAST_EMA = 9  
-SLOW_EMA = 21  
+CANDLE_LIMIT = 50
+FAST_EMA = 9
+SLOW_EMA = 21
 POSITION_SIZE = 0.001  # per trade
 SLEEP_SECONDS = 60  # seconds between checks (60 = check every minute)
 IS_MAINNET = False
@@ -31,8 +31,8 @@ RUN_DURATION_S = 2 * 60 * 60  # 2 hours in seconds
 
 # Risk parameters
 INITIAL_BALANCE = 10_000.0
-MAX_POSITION_PCT = 0.05  
-MAX_DAILY_LOSS_PCT = 0.02 
+MAX_POSITION_PCT = 0.05
+MAX_DAILY_LOSS_PCT = 0.02
 
 # ──────────────────────────────────────────────────────────────
 # LOGGING SETUP
@@ -52,7 +52,6 @@ logger = logging.getLogger("live_runner")
 
 
 class LiveRunner:
- 
     def __init__(self) -> None:
         private_key = os.getenv("HL_PRIVATE_KEY")
         account_address = os.getenv("HL_ACCOUNT_ADDRESS")

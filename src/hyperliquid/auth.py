@@ -233,7 +233,7 @@ class HyperliquidAuth:
     ) -> dict[str, Any]:
         """
         Builds a signed request body ready to POST to /exchange.
-        
+
         Usage:
             auth = HyperliquidAuth(private_key=..., account_address=...)
             body = auth(action={"type": "order", ...})

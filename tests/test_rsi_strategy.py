@@ -125,14 +125,12 @@ def test_hold_exactly_at_min_periods_minus_1():
 
 
 def test_buy_when_rsi_crosses_below_30():
-    """
-    Build a price series where RSI crosses below 30.
-    Prices fall sharply for a long time → RSI drops below 30.
-    """
+    """RSI must CROSS below 30 — needs to start above 30 then dip."""
     s = RSIStrategy(period=5, oversold_threshold=30.0, overbought_threshold=70.0)
-    # Sharp sustained fall → RSI goes very low
-    closes = [100.0 - i * 5.0 for i in range(20)]
-    # Find the point where BUY fires
+    # Start neutral (RSI ~50), then fall sharply
+    neutral = [100.0] * 8  # RSI settles near 50
+    falling = [100.0 - i * 8.0 for i in range(1, 12)]  # sharp fall
+    closes = neutral + falling
     signals = [s.generate_signal(closes[: i + 1]) for i in range(len(closes))]
     assert "BUY" in signals
 
@@ -150,12 +148,11 @@ def test_buy_signal_returns_string():
 
 
 def test_sell_when_rsi_crosses_above_70():
-    """
-    Build a price series where RSI crosses above 70.
-    Prices rise sharply → RSI goes above 70.
-    """
+    """RSI must CROSS above 70 — needs to start below 70 then spike."""
     s = RSIStrategy(period=5, oversold_threshold=30.0, overbought_threshold=70.0)
-    closes = [100.0 + i * 5.0 for i in range(20)]
+    neutral = [100.0] * 8
+    rising = [100.0 + i * 8.0 for i in range(1, 12)]
+    closes = neutral + rising
     signals = [s.generate_signal(closes[: i + 1]) for i in range(len(closes))]
     assert "SELL" in signals
 
