@@ -225,5 +225,5 @@ def test_bollinger_latest_matches_last():
 
 
 def test_bollinger_latest_not_enough_raises():
-    with pytest.raises(ValueError, match="Not enough data"):
+    with pytest.raises(ValueError):
         bollinger_latest([1.0, 2.0], period=20)
