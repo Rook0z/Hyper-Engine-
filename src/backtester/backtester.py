@@ -125,7 +125,7 @@ class Backtester:
         result = self._build_result(trades, len(candles))
 
         logger.info(
-            "Backtest complete: %d trades, PnL: %+.2f, win rate: %.1%%",
+            "Backtest complete: %d trades, PnL: %+.2f, win rate: %.1f%%",
             result.num_trades,
             result.total_pnl,
             result.win_rate * 100,
