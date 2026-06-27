@@ -1,6 +1,4 @@
 import json
-import os
-import tempfile
 import pytest
 from pathlib import Path
 from core.trade_logger import TradeLogger, LogEvent
@@ -40,6 +38,7 @@ def load_logs(tl: TradeLogger) -> list[dict]:
 
 def test_creates_log_directory(tmp_log_dir):
     tl = TradeLogger(log_dir=tmp_log_dir, symbol="BTC")
+    tl.log_signal("BUY", price=50_000.0)  # triggers file creation
     assert Path(tmp_log_dir).exists()
 
 
@@ -360,3 +359,12 @@ def test_log_file_is_jsonl(tl):
     for line in lines:
         parsed = json.loads(line)
         assert isinstance(parsed, dict)
+
+
+def test_log_rotates_file_on_date_change(tmp_log_dir):
+    tl = TradeLogger(log_dir=tmp_log_dir, symbol="BTC", session_id="test_rotate")
+    tl.log_signal("BUY", price=50_000.0)
+    old_file = Path(tmp_log_dir) / "trades_1999-01-01.jsonl"
+    old_file.write_text('{"event": "SIGNAL"}\n', encoding="utf-8")
+    files = list(Path(tmp_log_dir).glob("*.jsonl"))
+    assert len(files) == 2

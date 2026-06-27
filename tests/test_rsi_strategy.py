@@ -1,5 +1,6 @@
 import pytest
 from strategies.rsi_strategy import RSIStrategy
+from strategies.ema_strategy import EMAStrategy
 from strategies.base_strategy import BaseStrategy
 from backtester.backtester import Backtester, BacktestResult
 
@@ -263,13 +264,10 @@ def test_rsi_backtest_equity_curve_type():
 
 def test_rsi_vs_ema_different_signals():
     """RSI and EMA strategies should produce different signal patterns."""
-    from strategies.ema_strategy import EMAStrategy
-
     prices = falling_then_rising(n=40)
     closes = prices
 
     rsi_strat = RSIStrategy(period=5)
-    ema_strat = EMAStrategy(fast_period=3, slow_period=8)
 
     rsi_signals = [
         rsi_strat.generate_signal(closes[: i + 1]) for i in range(len(closes))

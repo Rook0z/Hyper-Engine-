@@ -241,8 +241,8 @@ def test_bb_different_from_rsi_signals():
     bb = BollingerStrategy(period=5, num_std=1.0)
     rsi = RSIStrategy(period=5)
 
-    bb_signals = [bb.generate_signal(prices[:i+1]) for i in range(len(prices))]
-    rsi_signals = [rsi.generate_signal(prices[:i+1]) for i in range(len(prices))]
+    bb_signals = [bb.generate_signal(prices[: i + 1]) for i in range(len(prices))]
+    rsi_signals = [rsi.generate_signal(prices[: i + 1]) for i in range(len(prices))]
     assert bb_signals != rsi_signals or "SELL" in rsi_signals
 
 

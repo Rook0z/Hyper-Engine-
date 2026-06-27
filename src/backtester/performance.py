@@ -4,7 +4,7 @@ import math
 import logging
 from dataclasses import dataclass
 
-from backtester.backtester import BacktestResult, Trade
+from backtester.backtester import BacktestResult
 
 logger = logging.getLogger(__name__)
 

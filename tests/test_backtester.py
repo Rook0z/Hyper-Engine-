@@ -1,8 +1,7 @@
-import pytest
 import pandas as pd
 import numpy as np
 from unittest.mock import MagicMock
-from backtester.backtester import Backtester, BacktestResult, Trade
+from backtester.backtester import Backtester, BacktestResult
 from strategies.base_strategy import BaseStrategy
 from strategies.ema_strategy import EMAStrategy
 
@@ -229,7 +228,6 @@ def test_slippage_buy_above_price():
 
 
 def test_slippage_reduces_pnl():
-    prices = [100.0, 100.0, 200.0, 200.0]
     candles_no_slip = [
         make_candle(1000, 100.0, 110.0),
         make_candle(2000, 150.0, 160.0),
@@ -342,6 +340,19 @@ def test_equity_as_series_returns_series():
     result = b.run(make_candles([100.0] * 5))
     eq = b.equity_as_series(result)
     assert isinstance(eq, pd.Series)
+
+
+def test_force_close_open_position_at_last_candle():
+    s = mock_strategy(["BUY"] + ["HOLD"] * 5)
+    b = Backtester(strategy=s, slippage_pct=0.0, position_size=1.0)
+    candles = [
+        make_candle(1000, 100.0, 110.0),
+        make_candle(2000, 150.0, 160.0),
+        make_candle(3000, 200.0, 210.0),
+        make_candle(4000, 250.0, 260.0),
+    ]
+    result = b.run(candles)
+    assert result.num_trades == 1
 
 
 def test_equity_as_series_name():

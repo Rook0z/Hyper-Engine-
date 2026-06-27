@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ class TradeLogger:
 
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._current_date: str = ""
-        self._file_handle = None
+        self._file_handle: "TextIO | None" = None
 
         logger.info(
             "TradeLogger initialized: dir=%s symbol=%s strategy=%s session=%s",
@@ -386,6 +385,9 @@ class TradeLogger:
 
         try:
             line = json.dumps(entry, default=str) + "\n"
+            if self._file_handle is None:
+                logger.error("Log file handle is None — entry dropped: %s", entry)
+                return
             self._file_handle.write(line)
             self._file_handle.flush()
         except Exception as e:

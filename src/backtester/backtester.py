@@ -98,13 +98,6 @@ class Backtester:
         """
         Runs the backtest on a list of OHLCV candles using pandas.
 
-        Flow:
-            1. Convert candles to DataFrame
-            2. Generate signals for every row using rolling window
-            3. Shift signals forward by 1 bar (next-bar execution)
-            4. Walk through signals to build trade list
-            5. Compute metrics from trade list
-
         Args:
             candles: List of [timestamp, open, high, low, close, volume]
                      Sorted oldest → newest.

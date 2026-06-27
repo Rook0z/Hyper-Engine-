@@ -17,8 +17,8 @@ Hyper-Engine/
 ├── docs/
 │   ├── hyperliquid_notes.md
 │   ├── hyperliquid_architecture.md
-│   ├── phase1_review.md
-│   └── phase2_review.md
+│   
+│   
 │
 ├── src/
 │   ├── hyperliquid/
@@ -41,7 +41,7 @@ Hyper-Engine/
 
 ---
 
-## Phase 1 — Hyperliquid API Client ✅ COMPLETE
+## Hyperliquid API Client 
 
 **Folder:** `src/hyperliquid/`
 
@@ -60,7 +60,7 @@ src/hyperliquid/
 
 ---
 
-## Phase 2 — Execution Engine & Strategy
+## Execution Engine & Strategy
 
 ---
 

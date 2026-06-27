@@ -254,6 +254,12 @@ def test_sortino_inf_when_no_losses(analyser):
     assert result == float("inf")
 
 
+def test_sortino_returns_inf_no_losses(analyser):
+    returns = [0.01, 0.02, 0.03]
+    result = analyser.sortino_ratio(returns)
+    assert result == float("inf")
+
+
 def test_sortino_zero_for_too_few_returns(analyser):
     assert analyser.sortino_ratio([0.01]) == 0.0
 
@@ -272,6 +278,10 @@ def test_sortino_positive_for_gains(analyser):
 def test_calmar_zero_when_no_drawdown(analyser):
     returns = [0.01, 0.02]
     assert analyser.calmar_ratio(returns, max_drawdown=0.0) == 0.0
+
+
+def test_calmar_zero_when_empty_returns(analyser):
+    assert analyser.calmar_ratio([], max_drawdown=0.1) == 0.0
 
 
 def test_calmar_zero_when_no_returns(analyser):

@@ -47,9 +47,9 @@ class RSIStrategy(BaseStrategy):
                 f"overbought_threshold ({overbought_threshold})."
             )
         if not 0 < oversold_threshold < 100:
-            raise ValueError(f"oversold_threshold must be between 0 and 100.")
+            raise ValueError("oversold_threshold must be between 0 and 100.")
         if not 0 < overbought_threshold < 100:
-            raise ValueError(f"overbought_threshold must be between 0 and 100.")
+            raise ValueError("overbought_threshold must be between 0 and 100.")
 
         self.period = period
         self.oversold_threshold = oversold_threshold
