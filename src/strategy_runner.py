@@ -12,6 +12,7 @@ from data.ohlcv_provider import OHLCVProvider
 from strategies.ema_strategy import EMAStrategy
 from strategies.rsi_strategy import RSIStrategy
 from strategies.bb_strategy import BollingerStrategy
+from strategies.vwap_strategy import VWAPStrategy
 from strategies.base_strategy import BaseStrategy
 from backtester.backtester import Backtester, BacktestResult
 from backtester.performance import PerformanceAnalyser, PerformanceReport
@@ -125,6 +126,66 @@ def clean_data(candles: list[list]) -> list[list]:
 
 
 # ──────────────────────────────────────────────────────────────
+# STRATEGY FACTORY
+# ──────────────────────────────────────────────────────────────
+
+# Every strategy class this runner knows how to build, purely from
+# settings. Used both to build the strategies that compete in
+# backtest_all() and to build a brand-new instance of the winning
+# strategy's class for paper trading — see _build_strategy().
+STRATEGY_CLASSES: tuple[type[BaseStrategy], ...] = (
+    EMAStrategy,
+    RSIStrategy,
+    BollingerStrategy,
+    VWAPStrategy,
+)
+
+
+def _build_strategy(strategy_cls: type[BaseStrategy]) -> BaseStrategy:
+    """
+    Constructs a brand-new strategy instance of the given class, using
+    the current settings — the single source of truth for strategy
+    configuration, shared by backtest_all() and paper trading.
+
+    IMPORTANT: this always returns a fresh instance with no prior
+    signal-dedup state (_last_signal / _last_crossover start at HOLD).
+    The backtester and the paper trader must never share a strategy
+    instance — see paper_trade() / run_pipeline() for why.
+
+    Args:
+        strategy_cls: One of the classes in STRATEGY_CLASSES.
+
+    Returns:
+        A new, unmutated strategy instance.
+
+    Raises:
+        ValueError: if strategy_cls is not a known strategy class.
+    """
+    if strategy_cls is EMAStrategy:
+        return EMAStrategy(
+            fast_period=settings.ema_fast_period,
+            slow_period=settings.ema_slow_period,
+        )
+    if strategy_cls is RSIStrategy:
+        return RSIStrategy(
+            period=settings.rsi_period,
+            oversold_threshold=settings.rsi_oversold,
+            overbought_threshold=settings.rsi_overbought,
+        )
+    if strategy_cls is BollingerStrategy:
+        return BollingerStrategy(
+            period=settings.bb_period,
+            num_std=settings.bb_num_std,
+        )
+    if strategy_cls is VWAPStrategy:
+        return VWAPStrategy(
+            mode=settings.vwap_mode,
+            num_std=settings.vwap_num_std,
+        )
+    raise ValueError(f"Unknown strategy class: {strategy_cls.__name__}")
+
+
+# ──────────────────────────────────────────────────────────────
 # BACKTEST ALL STRATEGIES
 # ──────────────────────────────────────────────────────────────
 
@@ -133,21 +194,7 @@ def backtest_all(
     candles: list[list],
 ) -> list[tuple[BaseStrategy, BacktestResult, PerformanceReport]]:
     """Runs all strategies on the same data. Returns sorted by Sharpe desc."""
-    strategies: list[BaseStrategy] = [
-        EMAStrategy(
-            fast_period=settings.ema_fast_period,
-            slow_period=settings.ema_slow_period,
-        ),
-        RSIStrategy(
-            period=settings.rsi_period,
-            oversold_threshold=settings.rsi_oversold,
-            overbought_threshold=settings.rsi_overbought,
-        ),
-        BollingerStrategy(
-            period=settings.bb_period,
-            num_std=settings.bb_num_std,
-        ),
-    ]
+    strategies: list[BaseStrategy] = [_build_strategy(cls) for cls in STRATEGY_CLASSES]
 
     analyser = PerformanceAnalyser()
     results = []
@@ -266,7 +313,15 @@ def paper_trade(
                 closes = [c[4] for c in candles]
                 price = closes[-1]
 
-                signal = strategy.generate_signal(closes)
+                # Strategies needing full OHLCV (e.g. VWAP) implement
+                # generate_signal_from_candles(candles); others use the
+                # closes-only generate_signal(closes). Same dispatch rule
+                # as Backtester._generate_signals, so backtest and live
+                # paper-trading behavior stay consistent.
+                if hasattr(strategy, "generate_signal_from_candles"):
+                    signal = strategy.generate_signal_from_candles(candles)
+                else:
+                    signal = strategy.generate_signal(closes)
 
                 if signal != "HOLD" or last_signal != "HOLD":
                     trade_log.log_signal(signal, price=price)
@@ -448,9 +503,21 @@ def run_pipeline() -> None:
         logger.warning("Best strategy had zero trades.")
         return
 
-    print(f"  Selected : {best_strategy.name}")
+    # IMPORTANT: never hand the backtested strategy instance to
+    # paper_trade(). It ran through the full backtest candle history,
+    # so its internal signal-dedup state (_last_signal /
+    # _last_crossover) reflects wherever the backtest happened to end —
+    # not a fresh "no signal yet" state. paper_trade()'s in_position
+    # always starts False, so reusing that mutated instance can
+    # suppress the first live signal or fire a SELL with no open
+    # position to close. Build a brand-new instance of the same class
+    # with the same configuration instead, so the backtester and the
+    # paper trader never share mutable strategy state.
+    fresh_strategy = _build_strategy(type(best_strategy))
+
+    print(f"  Selected : {fresh_strategy.name}")
     print(f"  Starting {settings.run_hours}h paper trade...\n")
-    paper_trade(best_strategy, ohlcv)
+    paper_trade(fresh_strategy, ohlcv)
 
 
 def _now_iso() -> str:
