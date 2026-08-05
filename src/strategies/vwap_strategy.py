@@ -12,6 +12,14 @@ class VWAPStrategy(BaseStrategy):
     """
     VWAP Strategy — two modes of operation.
 
+    Note: uses a CUMULATIVE / ROLLING VWAP (see calculate_vwap() in
+    indicators/vwap.py), not a session-anchored daily VWAP. It does not
+    reset at the start of each trading day — it accumulates over
+    whatever candle window is passed in (e.g. the full backtest range).
+    Over long windows this behaves more like a slow-moving, volume-
+    weighted trend line than institutional "average price paid today"
+    VWAP. Session-based resets are a known follow-up, not yet implemented.
+
     Mode "crossover" (default):
         BUY  when price crosses above VWAP from below
         SELL when price crosses below VWAP from above
@@ -120,8 +128,11 @@ class VWAPStrategy(BaseStrategy):
             BUY  when price crosses from below VWAP to above VWAP
             SELL when price crosses from above VWAP to below VWAP
         """
-        # Reset signal state when price is near VWAP (within 0.1%)
-        near_vwap = abs(curr_close - curr_vwap) / curr_vwap < 0.001
+        # Reset signal state when price is near VWAP (within 0.1%).
+        # Guard against curr_vwap == 0 (degenerate zero-price input) to
+        # avoid a ZeroDivisionError — treat that case as "not near VWAP"
+        # rather than crashing.
+        near_vwap = curr_vwap != 0 and abs(curr_close - curr_vwap) / curr_vwap < 0.001
         if near_vwap:
             self._last_signal = self.HOLD
 
