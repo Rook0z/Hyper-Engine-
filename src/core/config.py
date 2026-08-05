@@ -146,6 +146,17 @@ class Settings(BaseSettings):
         description="Number of standard deviations for Bollinger Bands.",
     )
 
+    # VWAP
+    vwap_mode: str = Field(
+        default="crossover",
+        description="VWAP strategy mode: 'crossover' (trend) or 'reversion' (mean reversion).",
+    )
+    vwap_num_std: float = Field(
+        default=2.0,
+        gt=0,
+        description="Number of standard deviations for VWAP bands (used in reversion mode).",
+    )
+
     # ──────────────────────────────────────────────────────────────
     # BACKTESTER SETTINGS
     # ──────────────────────────────────────────────────────────────
@@ -211,6 +222,14 @@ class Settings(BaseSettings):
     def validate_rsi_overbought(cls, v: float) -> float:
         if v <= 50:
             raise ValueError(f"rsi_overbought must be above 50, got {v}")
+        return v
+
+    @field_validator("vwap_mode")
+    @classmethod
+    def validate_vwap_mode(cls, v: str) -> str:
+        valid = {"crossover", "reversion"}
+        if v not in valid:
+            raise ValueError(f"vwap_mode must be one of {sorted(valid)}, got '{v}'")
         return v
 
     # ──────────────────────────────────────────────────────────────
