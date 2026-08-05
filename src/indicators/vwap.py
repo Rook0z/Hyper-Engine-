@@ -36,9 +36,20 @@ def calculate_vwap(
     """
     Calculates VWAP and standard deviation bands for a list of OHLCV candles.
 
-    VWAP accumulates from the first candle — it does not reset by day here
-    because Hyperliquid candles are indexed from when you request them.
-    Pass only candles from the current trading day for true daily VWAP.
+    IMPORTANT — this is a CUMULATIVE / ROLLING VWAP, not a session-anchored
+    daily VWAP. It accumulates from the first candle in the list you pass
+    in and never resets by trading day/session. As more candles are
+    added, each new bar's marginal weight shrinks (Δvwap ∝ volume_i /
+    cum_vol), so over long windows this converges toward a slow-moving,
+    volume-weighted trend line rather than the "average price paid
+    today" benchmark VWAP conventionally refers to.
+
+    To approximate a true daily VWAP, pass only candles from the current
+    trading day. Automatic session-based resets are NOT implemented —
+    this is a known, deliberate limitation for now, not an oversight.
+    Callers (e.g. VWAPStrategy, strategy_runner) currently pass whatever
+    candle window they have (e.g. the full backtest range), so the VWAP
+    line anchors to the start of that window, not to a trading session.
 
     Args:
         candles:  List of [timestamp, open, high, low, close, volume]
