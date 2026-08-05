@@ -205,16 +205,32 @@ class Backtester:
 
     def _generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        For each row i, collects closes[0:i+1] and calls
-        strategy.generate_signal(). The result is stored in df["signal"].
+        For each row i, calls the strategy's signal method and stores the
+        result in df["signal"].
+
+        Strategies that only need close prices implement
+        generate_signal(closes). Strategies that need full OHLCV data
+        (e.g. VWAP) implement generate_signal_from_candles(candles) instead.
+        This is detected via duck typing so close-only strategies
+        (EMA, RSI, Bollinger) are completely unaffected.
 
         signal values: "BUY", "SELL", "HOLD"
         """
         closes = df["close"].tolist()
         signals = []
 
+        use_candles = hasattr(self.strategy, "generate_signal_from_candles")
+        candles = (
+            df[["timestamp", "open", "high", "low", "close", "volume"]].values.tolist()
+            if use_candles
+            else None
+        )
+
         for i in range(len(closes)):
-            signal = self.strategy.generate_signal(closes[: i + 1])
+            if use_candles:
+                signal = self.strategy.generate_signal_from_candles(candles[: i + 1])
+            else:
+                signal = self.strategy.generate_signal(closes[: i + 1])
             signals.append(signal)
 
         df["signal"] = signals
