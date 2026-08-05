@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 from backtester.backtester import Backtester, BacktestResult
 from strategies.base_strategy import BaseStrategy
 from strategies.ema_strategy import EMAStrategy
+from strategies.vwap_strategy import VWAPStrategy
 
 
 # ──────────────────────────────────────────────────────────────
@@ -33,6 +34,23 @@ def mock_strategy(signals):
     signal_iter = iter(signals)
     strategy.generate_signal.side_effect = lambda closes: next(signal_iter, "HOLD")
     return strategy
+
+
+class FakeCandleStrategy:
+    """
+    Minimal candle-based strategy stub used to test the backtester's
+    candle routing path without depending on VWAPStrategy internals.
+    Deliberately has NO generate_signal(closes) method — only
+    generate_signal_from_candles(candles) — mirroring VWAPStrategy's shape.
+    """
+
+    def __init__(self, signals):
+        self.name = "FakeCandleStrategy"
+        self.min_periods = 1
+        self._signals = iter(signals)
+
+    def generate_signal_from_candles(self, candles):
+        return next(self._signals, "HOLD")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -92,6 +110,32 @@ def test_generate_signals_values_are_strings():
     df = b._build_dataframe(candles)
     df = b._generate_signals(df)
     assert all(isinstance(v, str) for v in df["signal"])
+
+
+def test_close_only_strategy_unaffected_by_candle_routing():
+    """
+    Regression guard: strategies without generate_signal_from_candles
+    (EMA, RSI, Bollinger, and this mock) must keep using the exact same
+    closes-only path as before the VWAP integration.
+    """
+    s = mock_strategy(["BUY", "HOLD", "SELL", "HOLD", "HOLD"])
+    b = Backtester(strategy=s)
+    candles = make_candles([100.0] * 5)
+    df = b._build_dataframe(candles)
+    df = b._generate_signals(df)
+    assert list(df["signal"]) == ["BUY", "HOLD", "SELL", "HOLD", "HOLD"]
+    s.generate_signal.assert_called()
+
+
+def test_generate_signals_uses_candle_based_strategy():
+    """New behavior: strategies that expose generate_signal_from_candles
+    are routed through the candle-based path instead of closes-only."""
+    s = FakeCandleStrategy(["BUY", "HOLD", "SELL", "HOLD", "HOLD"])
+    b = Backtester(strategy=s)
+    candles = make_candles([100.0] * 5)
+    df = b._build_dataframe(candles)
+    df = b._generate_signals(df)
+    assert list(df["signal"]) == ["BUY", "HOLD", "SELL", "HOLD", "HOLD"]
 
 
 # ──────────────────────────────────────────────────────────────
@@ -398,6 +442,20 @@ def test_equity_curve_length_equals_trades_plus_one():
     prices = [100 + i * 2.0 for i in range(20)]
     result = b.run(make_candles(prices))
     assert len(result.equity_curve) == result.num_trades + 1
+
+
+def test_vwap_strategy_backtest_runs():
+    """
+    Integration test: VWAPStrategy (real, not mocked) trades through the
+    backtester via the new candle-based routing path.
+    """
+    strategy = VWAPStrategy(mode="crossover")
+    b = Backtester(strategy=strategy, slippage_pct=0.0, position_size=1.0)
+    prices = [100 + i * 2.0 for i in range(15)] + [130 - i * 2.0 for i in range(15)]
+    result = b.run(make_candles(prices))
+    assert isinstance(result, BacktestResult)
+    assert result.candles_tested == 30
+    assert 0.0 <= result.win_rate <= 1.0
 
 
 def test_numpy_equity_curve_cumsum():
