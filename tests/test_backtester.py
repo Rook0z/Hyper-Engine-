@@ -478,3 +478,97 @@ def test_numpy_equity_curve_cumsum():
         expected_curve = [10_000.0] + list(10_000.0 + np.cumsum(pnl_arr))
         for actual, expected in zip(result.equity_curve, expected_curve):
             assert abs(actual - expected) < 1e-6
+
+
+# ──────────────────────────────────────────────────────────────
+# METADATA (slippage_pct, backtest_start_time, backtest_end_time,
+# backtest_initial_capital) — reporting-only fields, must never affect
+# trade simulation.
+# ──────────────────────────────────────────────────────────────
+
+
+def test_backtest_result_metadata_defaults():
+    """A BacktestResult constructed without metadata defaults sensibly."""
+    result = BacktestResult(strategy_name="Test", symbol="BTC", candles_tested=0)
+    assert result.slippage_pct == 0.0
+    assert result.backtest_start_time == 0
+    assert result.backtest_end_time == 0
+    assert result.backtest_initial_capital == 0.0
+
+
+def test_run_populates_slippage_pct_metadata():
+    s = mock_strategy(["HOLD"] * 5)
+    b = Backtester(strategy=s, slippage_pct=0.0123)
+    result = b.run(make_candles([100.0] * 5))
+    assert result.slippage_pct == 0.0123
+
+
+def test_run_populates_initial_capital_metadata():
+    s = mock_strategy(["HOLD"] * 5)
+    b = Backtester(strategy=s, initial_capital=25_000.0)
+    result = b.run(make_candles([100.0] * 5))
+    assert result.backtest_initial_capital == 25_000.0
+
+
+def test_run_populates_start_and_end_time_metadata():
+    s = mock_strategy(["HOLD"] * 5)
+    b = Backtester(strategy=s)
+    candles = make_candles([100.0] * 5, start_ts=1_000_000, interval_ms=3_600_000)
+    result = b.run(candles)
+    assert result.backtest_start_time == 1_000_000
+    assert result.backtest_end_time == 1_000_000 + 4 * 3_600_000
+
+
+def test_run_metadata_populated_even_with_trades():
+    s = mock_strategy(["BUY", "HOLD", "SELL", "HOLD"])
+    b = Backtester(strategy=s, slippage_pct=0.002, initial_capital=5_000.0)
+    candles = make_candles([100.0, 110.0, 120.0, 130.0], start_ts=2_000_000)
+    result = b.run(candles)
+    assert result.num_trades == 1
+    assert result.slippage_pct == 0.002
+    assert result.backtest_initial_capital == 5_000.0
+    assert result.backtest_start_time == 2_000_000
+
+
+def test_run_too_few_candles_still_sets_metadata():
+    s = mock_strategy([])
+    b = Backtester(strategy=s, slippage_pct=0.005, initial_capital=1_000.0)
+    result = b.run([make_candle(500, 100.0, 100.0)])
+    assert result.num_trades == 0
+    assert result.slippage_pct == 0.005
+    assert result.backtest_initial_capital == 1_000.0
+    assert result.backtest_start_time == 500
+    assert result.backtest_end_time == 500
+
+
+def test_run_empty_candles_metadata_defaults_to_zero():
+    s = mock_strategy([])
+    b = Backtester(strategy=s, slippage_pct=0.005, initial_capital=1_000.0)
+    result = b.run([])
+    assert result.backtest_start_time == 0
+    assert result.backtest_end_time == 0
+    # initial_capital and slippage_pct are backtester config, not
+    # data-dependent, so they're still recorded even with zero candles.
+    assert result.backtest_initial_capital == 1_000.0
+    assert result.slippage_pct == 0.005
+
+
+def test_metadata_does_not_affect_trade_simulation():
+    """
+    Regression guard: adding metadata fields must not change trade
+    outcomes. Same candles/config, only checking simulation results are
+    identical to what they were before this metadata was added.
+    """
+    s = mock_strategy(["BUY", "HOLD", "SELL", "HOLD"])
+    b = Backtester(strategy=s, slippage_pct=0.0, position_size=1.0)
+    candles = [
+        make_candle(1000, 100.0, 110.0),
+        make_candle(2000, 150.0, 160.0),
+        make_candle(3000, 200.0, 210.0),
+        make_candle(4000, 250.0, 260.0),
+    ]
+    result = b.run(candles)
+    assert result.num_trades == 1
+    assert result.trades[0].entry_price == 150.0
+    assert result.trades[0].exit_price == 250.0
+    assert result.total_pnl == 100.0
