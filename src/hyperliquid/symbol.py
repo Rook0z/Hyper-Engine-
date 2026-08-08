@@ -34,6 +34,7 @@ class HyperliquidSymbol:
         self._perp_map: dict[str, int] = {}  # "BTC" → 0
         self._spot_map: dict[str, int] = {}  # "PURR/USDC" → 10000
         self._reverse_map: dict[int, str] = {}  # 0 → "BTC", 10000 → "PURR/USDC"
+        self._sz_decimals: dict[str, int] = {}  # "BTC" → 5
         self._loaded = False
 
     def load(self) -> None:
@@ -62,6 +63,7 @@ class HyperliquidSymbol:
                 continue  # skip delisted assets
             self._perp_map[asset.name] = index
             self._reverse_map[index] = asset.name
+            self._sz_decimals[asset.name] = asset.szDecimals
 
         logger.debug("Loaded %d perp symbols", len(self._perp_map))
 
@@ -148,6 +150,26 @@ class HyperliquidSymbol:
         if symbol is None:
             raise SymbolNotFoundError(f"Asset ID {asset_id} not found in reverse map.")
         return symbol
+
+    def get_sz_decimals(self, symbol: str) -> int:
+        """
+        Returns the perpetual asset's szDecimals (size precision) —
+        also needed to compute Hyperliquid's price precision limit:
+        prices may have at most (6 - szDecimals) decimal places, in
+        addition to the separate 5-significant-figure limit.
+
+        Args:
+            symbol: e.g. "BTC"
+
+        Raises:
+            RuntimeError: If load() has not been called yet
+            SymbolNotFoundError: If the symbol is not in the universe
+        """
+        self._require_loaded()
+        decimals = self._sz_decimals.get(symbol)
+        if decimals is None:
+            raise SymbolNotFoundError(f"Perp symbol '{symbol}' not found.")
+        return decimals
 
     def all_perp_symbols(self) -> list[str]:
         """Returns a sorted list of all tradeable perpetual symbols."""
