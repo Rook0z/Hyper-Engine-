@@ -98,6 +98,40 @@ def test_get_perp_asset_id_unknown_raises(loaded_symbol_map):
         loaded_symbol_map.get_perp_asset_id("XYZ")
 
 
+# ───────────────────────────────────────────────────────────
+# SZ_DECIMALS TESTS
+# ───────────────────────────────────────────────────────────
+
+
+def test_get_sz_decimals_btc(loaded_symbol_map):
+    assert loaded_symbol_map.get_sz_decimals("BTC") == 5
+
+
+def test_get_sz_decimals_eth(loaded_symbol_map):
+    assert loaded_symbol_map.get_sz_decimals("ETH") == 4
+
+
+def test_get_sz_decimals_sol(loaded_symbol_map):
+    assert loaded_symbol_map.get_sz_decimals("SOL") == 2
+
+
+def test_get_sz_decimals_unknown_raises(loaded_symbol_map):
+    with pytest.raises(SymbolNotFoundError, match="XYZ"):
+        loaded_symbol_map.get_sz_decimals("XYZ")
+
+
+def test_get_sz_decimals_delisted_raises(loaded_symbol_map):
+    """Delisted assets are skipped entirely during load, same as get_perp_asset_id."""
+    with pytest.raises(SymbolNotFoundError):
+        loaded_symbol_map.get_sz_decimals("LOOM")
+
+
+def test_get_sz_decimals_before_load_raises(mock_client):
+    symbol_map = HyperliquidSymbol(client=mock_client)
+    with pytest.raises(RuntimeError, match="load()"):
+        symbol_map.get_sz_decimals("BTC")
+
+
 # ──────────────────────────────────────────────────────────────
 # SPOT LOOKUP TESTS
 # ──────────────────────────────────────────────────────────────
