@@ -1006,7 +1006,7 @@ version = "1.1.2"
 description = "MessagePack serializer"
 optional = false
 python-versions = ">=3.9"
-groups = ["main"]
+groups = ["main", "dev"]
 markers = "python_version < \"4\""
 files = [
     {file = "msgpack-1.1.2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:0051fffef5a37ca2cd16978ae4f0aef92f164df86823871b5162812bebecd8e2"},
@@ -1072,6 +1072,23 @@ files = [
     {file = "msgpack-1.1.2-cp39-cp39-win_amd64.whl", hash = "sha256:67016ae8c8965124fdede9d3769528ad8284f14d635337ffa6a713a580f6c030"},
     {file = "msgpack-1.1.2.tar.gz", hash = "sha256:3b60763c1373dd60f398488069bcdc703cd08a711477b5d480eecc9f9626f47e"},
 ]
+
+[[package]]
+name = "msgpack-types"
+version = "0.7.0"
+description = "Type stubs for msgpack"
+optional = false
+python-versions = "<4.0,>=3.8"
+groups = ["dev"]
+markers = "python_version < \"4\""
+files = [
+    {file = "msgpack_types-0.7.0-py3-none-any.whl", hash = "sha256:b07de919b771a782cdfd49d4c7b6a085661b55036d616fda1c01e3ca78cce459"},
+    {file = "msgpack_types-0.7.0.tar.gz", hash = "sha256:dadd3c51a7a869c2dabf59a97bdcdca951c453f310d73d471e104366f5c4bc87"},
+]
+
+[package.dependencies]
+msgpack = ">=1.1.0,<1.2.0"
+typing-extensions = ">=4.6.0"
 
 [[package]]
 name = "mypy"
@@ -1162,7 +1179,7 @@ version = "2.5.0"
 description = "Fundamental package for array computing in Python"
 optional = false
 python-versions = ">=3.12"
-groups = ["main"]
+groups = ["main", "dev"]
 files = [
     {file = "numpy-2.5.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:489780423903667933b4ed6197b6ec3b75ea5dd17d1d8f0f38d798feb6921561"},
     {file = "numpy-2.5.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:ece55976ced6bca95a03ae2839e2e5ccffe8eb6a3e7022415645eb154a81e4e6"},
@@ -1313,6 +1330,21 @@ sql-other = ["SQLAlchemy (>=2.0.36)", "adbc-driver-postgresql (>=1.2.0)", "adbc-
 test = ["hypothesis (>=6.116.0)", "pytest (>=8.3.4)", "pytest-xdist (>=3.6.1)"]
 timezone = ["pytz (>=2020.1)"]
 xml = ["lxml (>=5.3.0)"]
+
+[[package]]
+name = "pandas-stubs"
+version = "3.0.5.260730"
+description = "Type annotations for pandas"
+optional = false
+python-versions = ">=3.11"
+groups = ["dev"]
+files = [
+    {file = "pandas_stubs-3.0.5.260730-py3-none-any.whl", hash = "sha256:60e90e3e1eda6937e337e243cbe6217e151c11137cd7eddf832af537c7310bfd"},
+    {file = "pandas_stubs-3.0.5.260730.tar.gz", hash = "sha256:f70a232c57d93a5a2c81f8a53953e10891a5374bc92652277deb325e2e4d0ff3"},
+]
+
+[package.dependencies]
+numpy = ">=1.23.5"
 
 [[package]]
 name = "parsimonious"
@@ -1922,4 +1954,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "b94926934574dbea6e5b5b1a6f1feafd8cf88c7de6f8fb67090bb06e8654e391"
+content-hash = "c135e82a87af05792b36554af740874201f271d9e71ac463b5509a21bd41f177"

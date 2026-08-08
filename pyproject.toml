@@ -22,6 +22,8 @@ pytest = "^8.0"
 pytest-cov = "^5.0"
 ruff = "^0.4"
 mypy = "^2.1.0"
+pandas-stubs = "^3.0.0"
+msgpack-types = {version = "^0.7.0", python = ">=3.12,<4"}
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
@@ -29,3 +31,22 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+
+[tool.mypy]
+# The project has a stray src/__init__.py (making "src" itself a
+# regular package), while every internal import in the codebase uses
+# bare names ("core.config", "strategies.ema_strategy", ...) as if
+# src's children were top-level packages — the same assumption
+# tool.pytest.ini_options.pythonpath already encodes above.
+#
+# mypy_path registers "src" as an additional search root.
+# explicit_package_bases tells mypy to use the closest ancestor
+# directory listed in mypy_path ("src") as a file's package base,
+# instead of continuing to walk up through src/__init__.py to the
+# project root. Together these make mypy compute
+# src/core/config.py -> "core.config" (matching the actual import
+# statements) rather than "src.core.config". No source file needs to
+# change for this.
+mypy_path = "src"
+explicit_package_bases = true
+namespace_packages = true
