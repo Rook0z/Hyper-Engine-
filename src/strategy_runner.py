@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Protocol, runtime_checkable
 from dotenv import load_dotenv
 
 from core.config import settings
@@ -18,6 +19,7 @@ from backtester.backtester import Backtester, BacktestResult
 from backtester.performance import PerformanceAnalyser, PerformanceReport
 from risk.risk_manager import RiskManager
 from core.trade_logger import TradeLogger
+from execution.testnet_executor import TestnetExecutionError, TestnetExecutor
 
 load_dotenv()
 
@@ -28,6 +30,33 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("strategy_runner")
+
+
+# ──────────────────────────────────────────────────────────────
+# TYPING HELPERS
+# ──────────────────────────────────────────────────────────────
+
+
+@runtime_checkable
+class _CandleBasedStrategy(Protocol):
+    """
+    Structural type for strategies that need full OHLCV data instead of
+    just closes (e.g. VWAPStrategy.generate_signal_from_candles) —
+    used only so mypy can narrow the strategy parameter's type in
+    paper_trade() below. Mirrors the identical helper in
+    backtester.backtester (kept local rather than imported, since it's
+    a private, usage-site-scoped typing helper in both places).
+
+    @runtime_checkable makes isinstance(x, _CandleBasedStrategy) check
+    for the presence of a callable generate_signal_from_candles
+    attribute — the exact same test hasattr(x,
+    "generate_signal_from_candles") performed before. Typing-only
+    change, not a behavior change.
+    """
+
+    def generate_signal_from_candles(
+        self, candles: list[list[float]]
+    ) -> str: ...
 
 
 # ──────────────────────────────────────────────────────────────
@@ -318,7 +347,7 @@ def paper_trade(
                 # closes-only generate_signal(closes). Same dispatch rule
                 # as Backtester._generate_signals, so backtest and live
                 # paper-trading behavior stay consistent.
-                if hasattr(strategy, "generate_signal_from_candles"):
+                if isinstance(strategy, _CandleBasedStrategy):
                     signal = strategy.generate_signal_from_candles(candles)
                 else:
                     signal = strategy.generate_signal(closes)
@@ -457,6 +486,262 @@ def paper_trade(
             "Session ended — trades=%d total_pnl=%+.4f USDC",
             num_trades,
             total_pnl,
+        )
+
+
+# ──────────────────────────────────────────────────────────────
+# LIVE TESTNET EXECUTION
+#
+# NOT paper trading. Every BUY/SELL signal that passes risk checks
+# here becomes a REAL order on Hyperliquid TESTNET via TestnetExecutor
+# (execution/testnet_executor.py), which independently refuses to
+# construct unless IS_MAINNET=False, the client is pointed at the
+# testnet endpoint, and ENABLE_TESTNET_LIVE_EXECUTION=true. This
+# function never fabricates signals — it only ever acts on whatever
+# the strategy actually produces, including HOLD.
+# ──────────────────────────────────────────────────────────────
+
+
+def live_testnet_trade(
+    strategy: BaseStrategy,
+    ohlcv: OHLCVProvider,
+    executor: TestnetExecutor,
+) -> None:
+    """
+    Runs `strategy` against REAL Hyperliquid TESTNET execution.
+
+    Mirrors paper_trade()'s signal-dispatch loop, but every BUY/SELL
+    that clears the risk check is submitted as a real order through
+    `executor`, and internal position state is only ever updated after
+    a CONFIRMED fill — never assumed from the signal or requested size.
+
+    Args:
+        strategy: Strategy instance to run (its own generate_signal /
+                  generate_signal_from_candles decides BUY/SELL/HOLD —
+                  never forced).
+        ohlcv:    OHLCVProvider for fetching live candles.
+        executor: A constructed TestnetExecutor (construction itself
+                  proves the safety checks passed).
+    """
+    logger.warning(
+        "Starting REAL TESTNET execution: %s for %.1f hours — this will "
+        "place ACTUAL orders on Hyperliquid testnet.",
+        strategy.name,
+        settings.run_hours,
+    )
+
+    trade_log = TradeLogger(
+        log_dir=settings.log_dir,
+        symbol=settings.symbol,
+        strategy=strategy.name,
+    )
+    risk = RiskManager(
+        account_balance=settings.initial_capital,
+        max_position_pct=settings.max_position_pct,
+        max_daily_loss_pct=settings.max_daily_loss_pct,
+        max_open_positions=settings.max_open_positions,
+    )
+
+    trade_log.log_session_start(
+        balance=settings.initial_capital,
+        extra={"strategy": strategy.name, "mode": "testnet_live_execution"},
+    )
+
+    # Position state reflects the REAL account at startup — never
+    # assumed to be flat just because this process just started.
+    in_position = executor.get_position_size() != 0.0
+    filled_qty = abs(executor.get_position_size())
+    entry_price = 0.0
+    daily_loss = 0.0
+    total_pnl = 0.0
+    num_trades = 0
+    last_signal = "HOLD"
+
+    run_seconds = settings.run_hours * 3600
+    start = time.time()
+
+    try:
+        while time.time() - start < run_seconds:
+            try:
+                candles = ohlcv.fetch(
+                    settings.symbol, interval=settings.interval, limit=50
+                )
+                if not candles:
+                    logger.warning("No candles — skipping tick")
+                    time.sleep(settings.sleep_seconds)
+                    continue
+
+                candles = clean_data(candles)
+                closes = [c[4] for c in candles]
+                price = closes[-1]
+
+                if isinstance(strategy, _CandleBasedStrategy):
+                    signal = strategy.generate_signal_from_candles(candles)
+                else:
+                    signal = strategy.generate_signal(closes)
+
+                if signal != "HOLD" or last_signal != "HOLD":
+                    trade_log.log_signal(signal, price=price)
+                logger.info(
+                    "[%s] Price=%.2f Signal=%s InPosition=%s",
+                    strategy.name,
+                    price,
+                    signal,
+                    in_position,
+                )
+                last_signal = signal
+
+                # BUY — never while already long, never a duplicate if
+                # an order for this symbol is already open.
+                if signal == "BUY" and not in_position:
+                    if executor.has_open_orders():
+                        logger.warning(
+                            "Open order already exists for %s — skipping "
+                            "BUY this tick.",
+                            settings.symbol,
+                        )
+                    else:
+                        risk_result = risk.check_trade(
+                            symbol=settings.symbol,
+                            price=price,
+                            requested_size=settings.position_size,
+                            current_daily_loss=daily_loss,
+                            open_positions=0,
+                        )
+                        if risk_result.allowed:
+                            oid = executor.submit_market_order(
+                                is_buy=True, size=risk_result.position_size
+                            )
+                            trade_log.log_order(
+                                "BUY",
+                                price=price,
+                                size=risk_result.position_size,
+                                order_type="MARKET",
+                            )
+                            fill = executor.wait_for_fill(oid, side="BUY")
+                            if fill.status == "filled":
+                                # Position state updated ONLY here, on
+                                # confirmed fill — and using the actual
+                                # filled size, not the requested size.
+                                filled_qty = fill.filled_size or risk_result.position_size
+                                entry_price = fill.avg_price or price
+                                in_position = True
+                                trade_log.log_fill(
+                                    "BUY", price=entry_price, size=filled_qty, oid=oid
+                                )
+                                logger.info(
+                                    "TESTNET BUY FILLED: %.6f %s @ %.2f",
+                                    filled_qty,
+                                    settings.symbol,
+                                    entry_price,
+                                )
+                            else:
+                                trade_log.log_error(
+                                    f"BUY not filled: {fill.status}",
+                                    context={"oid": oid},
+                                )
+                                logger.error(
+                                    "TESTNET BUY did not fill (status=%s) — "
+                                    "position state unchanged.",
+                                    fill.status,
+                                )
+                        else:
+                            trade_log.log_risk_block(
+                                reason=risk_result.reason,
+                                requested_size=settings.position_size,
+                            )
+                            logger.warning("Risk blocked: %s", risk_result.reason)
+
+                # SELL — never when there is no confirmed position.
+                elif signal == "SELL" and in_position:
+                    oid = executor.submit_market_order(is_buy=False, size=filled_qty)
+                    trade_log.log_order(
+                        "SELL", price=price, size=filled_qty, order_type="MARKET"
+                    )
+                    fill = executor.wait_for_fill(oid, side="SELL")
+                    if fill.status == "filled":
+                        exit_price = fill.avg_price or price
+                        pnl = (exit_price - entry_price) * filled_qty
+                        pnl_pct = (
+                            (exit_price - entry_price) / entry_price
+                            if entry_price
+                            else 0.0
+                        )
+                        total_pnl += pnl
+                        num_trades += 1
+                        if pnl < 0:
+                            daily_loss += abs(pnl)
+
+                        trade_log.log_fill(
+                            "SELL", price=exit_price, size=filled_qty, oid=oid
+                        )
+                        trade_log.log_trade_closed(
+                            side="LONG",
+                            entry_price=entry_price,
+                            exit_price=exit_price,
+                            size=filled_qty,
+                            pnl=pnl,
+                            pnl_pct=pnl_pct,
+                        )
+                        risk.update_balance(settings.initial_capital + total_pnl)
+                        in_position = False
+                        filled_qty = 0.0
+                        logger.info(
+                            "TESTNET SELL FILLED: @ %.2f | PnL=%+.4f USDC (%+.2f%%)",
+                            exit_price,
+                            pnl,
+                            pnl_pct * 100,
+                        )
+                    else:
+                        remaining = executor.get_position_size()
+                        trade_log.log_error(
+                            f"SELL not filled: {fill.status}",
+                            context={"oid": oid, "remaining_position": remaining},
+                        )
+                        logger.error(
+                            "TESTNET SELL did not fill (status=%s). Remaining "
+                            "OPEN TESTNET POSITION: %s %s — resolve manually. "
+                            "Position state left unchanged (still in_position).",
+                            fill.status,
+                            remaining,
+                            settings.symbol,
+                        )
+
+            except NetworkError as e:
+                logger.warning("Network error — retrying next tick: %s", e)
+                trade_log.log_error(str(e), context={"type": "NetworkError"})
+            except APIError as e:
+                logger.error("API error: %s", e)
+                trade_log.log_error(str(e), context={"type": "APIError"})
+            except TestnetExecutionError as e:
+                logger.error("Execution error: %s", e)
+                trade_log.log_error(str(e), context={"type": "TestnetExecutionError"})
+
+            time.sleep(settings.sleep_seconds)
+
+    except KeyboardInterrupt:
+        logger.info("Stopped by user.")
+
+    finally:
+        remaining_position = executor.get_position_size()
+        if remaining_position != 0.0:
+            logger.warning(
+                "Session ending with an OPEN TESTNET POSITION: %s %s — "
+                "this is NOT force-closed automatically. Close it manually "
+                "or via the smoke test / a manual SELL.",
+                remaining_position,
+                settings.symbol,
+            )
+        trade_log.log_session_end(
+            balance=settings.initial_capital + total_pnl,
+            total_pnl=total_pnl,
+            num_trades=num_trades,
+        )
+        logger.info(
+            "Session ended — trades=%d total_pnl=%+.4f USDC remaining_position=%s",
+            num_trades,
+            total_pnl,
+            remaining_position,
         )
 
 
