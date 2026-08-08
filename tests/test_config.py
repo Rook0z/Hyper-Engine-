@@ -4,81 +4,114 @@ from core.config import Settings
 
 
 # ──────────────────────────────────────────────────────────────
+# ENV ISOLATION
+#
+# Settings loads config in order: class defaults -> .env file ->
+# OS environment variables (each overriding the last). A plain
+# Settings() — or even Settings(_env_file=None), which only skips the
+# .env FILE — will still silently pick up matching OS environment
+# variables from the developer's shell (e.g. an exported INTERVAL=5m,
+# RSI_PERIOD=5 left over from running the live runner locally).
+#
+# The isolated_settings fixture strips every OS environment variable
+# that matches a Settings field name (case-insensitively) for the
+# duration of a test, so Settings(_env_file=None) inside that test
+# reflects the class's true defaults regardless of what's exported in
+# the local shell or set in .env.
+# ──────────────────────────────────────────────────────────────
+
+SETTINGS_FIELD_NAMES = list(Settings.model_fields.keys())
+
+
+@pytest.fixture
+def isolated_settings(monkeypatch):
+    for name in SETTINGS_FIELD_NAMES:
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.upper(), raising=False)
+    yield
+
+
+# ──────────────────────────────────────────────────────────────
 # DEFAULTS
 # ──────────────────────────────────────────────────────────────
 
 
-def test_default_symbol():
-    s = Settings()
+def test_default_symbol(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.symbol == "BTC"
 
 
-def test_default_interval():
-    s = Settings()
+def test_default_interval(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.interval == "1h"
 
 
-def test_default_is_testnet():
-    s = Settings()
+def test_default_is_testnet(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.is_mainnet is False
 
 
-def test_default_position_size():
-    s = Settings()
+def test_default_position_size(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.position_size == 0.001
 
 
-def test_default_initial_capital():
-    s = Settings()
+def test_default_initial_capital(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.initial_capital == 10_000.0
 
 
-def test_default_ema_periods():
-    s = Settings()
+def test_default_ema_periods(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.ema_fast_period == 9
     assert s.ema_slow_period == 21
 
 
-def test_default_rsi_settings():
-    s = Settings()
+def test_default_rsi_settings(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.rsi_period == 14
     assert s.rsi_oversold == 30.0
     assert s.rsi_overbought == 70.0
 
 
-def test_default_bb_settings():
-    s = Settings()
+def test_default_bb_settings(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.bb_period == 20
     assert s.bb_num_std == 2.0
 
 
-def test_default_sleep_seconds():
-    s = Settings()
+def test_default_sleep_seconds(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.sleep_seconds == 60
 
 
-def test_default_run_hours():
-    s = Settings()
+def test_default_run_hours(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.run_hours == 2.0
 
 
-def test_default_log_dir():
-    s = Settings()
+def test_default_log_dir(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.log_dir == "logs"
 
 
-def test_default_backtest_candles():
-    s = Settings()
+def test_default_backtest_candles(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.backtest_candles == 500
 
 
-def test_default_min_sharpe():
-    s = Settings()
+def test_default_min_sharpe(isolated_settings):
+    s = Settings(_env_file=None)
     assert s.min_sharpe_to_trade == 0.5
 
 
 # ──────────────────────────────────────────────────────────────
 # OVERRIDE VIA KWARGS
+#
+# These pass values as explicit constructor kwargs, which is the
+# highest-precedence source in pydantic-settings — always wins over
+# env vars and .env regardless of what's exported locally, so no
+# isolation fixture is needed here.
 # ──────────────────────────────────────────────────────────────
 
 
@@ -122,6 +155,9 @@ def test_override_rsi():
 
 # ──────────────────────────────────────────────────────────────
 # VALIDATORS
+#
+# Explicit kwargs here too — validators fire on the passed value
+# regardless of env/.env state, so no isolation needed.
 # ──────────────────────────────────────────────────────────────
 
 
@@ -242,6 +278,10 @@ def test_summary_returns_string():
 
 # ──────────────────────────────────────────────────────────────
 # SINGLETON IMPORT
+#
+# These intentionally test the real settings singleton as-is
+# (reflecting real .env / environment), not isolated defaults — that
+# is the correct behavior for these two tests, so no fixture is used.
 # ──────────────────────────────────────────────────────────────
 
 
