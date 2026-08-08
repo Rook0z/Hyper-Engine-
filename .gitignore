@@ -42,6 +42,8 @@ logs/
 # VSCode
 .vscode/
 
+.ai/
+
 # OS
 .DS_Store
 Thumbs.db
