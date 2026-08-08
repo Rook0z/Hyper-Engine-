@@ -35,4 +35,4 @@ jobs:
         run: poetry run pytest --cov=src --cov-report=term-missing --cov-fail-under=80
 
       - name: Mypy type check
-        run: poetry run mypy src/ --ignore-missing-imports
+        run: poetry run mypy src tests

@@ -118,7 +118,7 @@ poetry run pytest --cov=src
 ```bash
 poetry run ruff format .
 poetry run ruff check .
-poetry run mypy src/ --ignore-missing-imports
+poetry run mypy src tests
 ```
 
 ---
