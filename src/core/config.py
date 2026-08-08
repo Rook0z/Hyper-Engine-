@@ -194,6 +194,34 @@ class Settings(BaseSettings):
     )
 
     # ──────────────────────────────────────────────────────────────
+    # TESTNET LIVE EXECUTION (src/execution/)
+    #
+    # Master safety switch for REAL Hyperliquid TESTNET order execution.
+    # This is completely separate from backtesting and paper trading,
+    # which never place real orders regardless of this setting.
+    # Defaults to False — must be explicitly enabled.
+    # ──────────────────────────────────────────────────────────────
+
+    enable_testnet_live_execution: bool = Field(
+        default=False,
+        description=(
+            "Master safety switch: must be explicitly True to allow "
+            "TestnetExecutor to submit REAL orders on Hyperliquid testnet. "
+            "Never affects backtesting or paper trading. Defaults to False."
+        ),
+    )
+    execution_poll_interval_seconds: float = Field(
+        default=1.0,
+        gt=0,
+        description="How often to poll order status while waiting for a real testnet fill.",
+    )
+    execution_poll_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="Max seconds to wait for a real testnet order to reach a terminal status.",
+    )
+
+    # ──────────────────────────────────────────────────────────────
     # VALIDATORS
     # ──────────────────────────────────────────────────────────────
 
