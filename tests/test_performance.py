@@ -535,7 +535,9 @@ def test_exposure_time_full(analyser):
 
 
 def test_exposure_time_no_trades_is_zero(analyser):
-    result = analyser.exposure_time([], backtest_start_time=0, backtest_end_time=3_600_000)
+    result = analyser.exposure_time(
+        [], backtest_start_time=0, backtest_end_time=3_600_000
+    )
     assert result == 0.0
 
 
@@ -547,7 +549,9 @@ def test_exposure_time_zero_span_is_zero(analyser):
 
 def test_exposure_time_negative_span_is_zero(analyser):
     trades = [make_trade_timed(0, 3_600_000, 10.0)]
-    result = analyser.exposure_time(trades, backtest_start_time=100, backtest_end_time=0)
+    result = analyser.exposure_time(
+        trades, backtest_start_time=100, backtest_end_time=0
+    )
     assert result == 0.0
 
 
@@ -597,7 +601,9 @@ def test_max_drawdown_duration_mismatched_lengths_is_safe(analyser):
 
 
 def test_max_drawdown_duration_too_few_points(analyser):
-    hours, recovered = analyser.max_drawdown_duration([100.0], [0], backtest_end_time=1000)
+    hours, recovered = analyser.max_drawdown_duration(
+        [100.0], [0], backtest_end_time=1000
+    )
     assert hours == 0.0
     assert recovered is True
 

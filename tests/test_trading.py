@@ -167,9 +167,9 @@ def test_place_market_order_price_respects_significant_figure_limit(
     price_str = action["orders"][0]["p"]
 
     significant_digits = price_str.replace(".", "").lstrip("0")
-    assert len(significant_digits) <= 5, (
-        f"price '{price_str}' has more than 5 significant figures"
-    )
+    assert (
+        len(significant_digits) <= 5
+    ), f"price '{price_str}' has more than 5 significant figures"
 
 
 def test_place_market_order_price_respects_decimal_limit_for_sz_decimals(

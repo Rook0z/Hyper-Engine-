@@ -51,8 +51,14 @@ class PerformanceReport:
 
     def __str__(self) -> str:
         pf = f"{self.profit_factor:.2f}" if self.profit_factor != float("inf") else "∞"
-        rf = f"{self.recovery_factor:.2f}" if self.recovery_factor != float("inf") else "∞"
-        recovered_label = "yes" if self.max_drawdown_recovered else "no (ongoing at end of backtest)"
+        rf = (
+            f"{self.recovery_factor:.2f}"
+            if self.recovery_factor != float("inf")
+            else "∞"
+        )
+        recovered_label = (
+            "yes" if self.max_drawdown_recovered else "no (ongoing at end of backtest)"
+        )
         return (
             f"\n{'='*50}\n"
             f"  PERFORMANCE REPORT\n"

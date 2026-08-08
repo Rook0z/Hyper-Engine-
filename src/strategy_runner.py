@@ -54,9 +54,7 @@ class _CandleBasedStrategy(Protocol):
     change, not a behavior change.
     """
 
-    def generate_signal_from_candles(
-        self, candles: list[list[float]]
-    ) -> str: ...
+    def generate_signal_from_candles(self, candles: list[list[float]]) -> str: ...
 
 
 # ──────────────────────────────────────────────────────────────
@@ -623,7 +621,9 @@ def live_testnet_trade(
                                 # Position state updated ONLY here, on
                                 # confirmed fill — and using the actual
                                 # filled size, not the requested size.
-                                filled_qty = fill.filled_size or risk_result.position_size
+                                filled_qty = (
+                                    fill.filled_size or risk_result.position_size
+                                )
                                 entry_price = fill.avg_price or price
                                 in_position = True
                                 trade_log.log_fill(

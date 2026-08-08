@@ -233,7 +233,9 @@ class TestnetExecutor:
             if poll_interval is not None
             else settings.execution_poll_interval_seconds
         )
-        timeout = timeout if timeout is not None else settings.execution_poll_timeout_seconds
+        timeout = (
+            timeout if timeout is not None else settings.execution_poll_timeout_seconds
+        )
         deadline = time.time() + timeout
 
         while True:
@@ -242,7 +244,9 @@ class TestnetExecutor:
 
             if status == "filled":
                 order = raw.get("order", {}) or {}
-                filled_size = float(order.get("sz", 0.0) or order.get("origSz", 0.0) or 0.0)
+                filled_size = float(
+                    order.get("sz", 0.0) or order.get("origSz", 0.0) or 0.0
+                )
                 avg_price = self._lookup_fill_price(oid)
                 logger.info(
                     "TESTNET ORDER FILLED side=%s order_id=%s size=%s avg_price=%s",
@@ -414,8 +418,6 @@ class TestnetExecutor:
             return buy_result, sell_result
 
         final_position = self.get_position_size()
-        logger.info(
-            "POSITION CLOSED remaining_size=%s %s", final_position, self.symbol
-        )
+        logger.info("POSITION CLOSED remaining_size=%s %s", final_position, self.symbol)
 
         return buy_result, sell_result

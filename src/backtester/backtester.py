@@ -32,9 +32,7 @@ class _CandleBasedStrategy(Protocol):
     typing-only change, not a behavior change.
     """
 
-    def generate_signal_from_candles(
-        self, candles: list[list[float]]
-    ) -> str: ...
+    def generate_signal_from_candles(self, candles: list[list[float]]) -> str: ...
 
 
 # ──────────────────────────────────────────────────────────────
