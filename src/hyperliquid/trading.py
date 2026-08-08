@@ -9,6 +9,33 @@ from hyperliquid.symbol import HyperliquidSymbol
 logger = logging.getLogger(__name__)
 
 
+def _round_price(price: float, sz_decimals: int) -> str:
+    """
+    Rounds a price to Hyperliquid's precision rules for perpetuals:
+    at most 5 significant figures, AND at most (6 - szDecimals)
+    decimal places — whichever is stricter. Prices that violate either
+    rule are rejected by the exchange with "Order has invalid price."
+
+    Example: BTC (szDecimals=5) at mid=64966.5 with 5% slippage gives
+    a raw price of 68214.825 (8 significant figures) — invalid.
+    Rounding to 5 sig figs gives 68215, then to (6-5)=1 decimal place
+    (already satisfied) gives a valid "68215".
+    """
+    if price <= 0:
+        return "0"
+
+    # Step 1: round to 5 significant figures.
+    sig_fig_price = float(f"{price:.5g}")
+
+    # Step 2: cap decimal places at (6 - szDecimals), never negative.
+    max_decimals = max(6 - sz_decimals, 0)
+    rounded = round(sig_fig_price, max_decimals)
+
+    if max_decimals == 0:
+        return str(int(rounded))
+    return f"{rounded:.{max_decimals}f}".rstrip("0").rstrip(".")
+
+
 class HyperliquidTrading:
     """
     Order execution and management on Hyperliquid.
@@ -153,10 +180,9 @@ class HyperliquidTrading:
 
         # 5% slippage tolerance
         slippage = 0.05
-        if is_buy:
-            price = str(round(mid * (1 + slippage), 6))
-        else:
-            price = str(round(mid * (1 - slippage), 6))
+        raw_price = mid * (1 + slippage) if is_buy else mid * (1 - slippage)
+        sz_decimals = self._symbol_map.get_sz_decimals(symbol)
+        price = _round_price(raw_price, sz_decimals)
 
         order: dict[str, Any] = {
             "a": asset_id,
