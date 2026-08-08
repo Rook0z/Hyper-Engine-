@@ -86,7 +86,7 @@ class EMAStrategy(BaseStrategy):
         slow_curr = slow_ema[-1]
         slow_prev = slow_ema[-2]
 
-        if any(v is None for v in [fast_curr, fast_prev, slow_curr, slow_prev]):
+        if fast_curr is None or fast_prev is None or slow_curr is None or slow_prev is None:
             return self.HOLD
 
         crossed_up = fast_prev <= slow_prev and fast_curr > slow_curr
