@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any, Protocol, cast, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -9,6 +10,31 @@ import pandas as pd
 from strategies.base_strategy import BaseStrategy
 
 logger = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────
+# TYPING HELPERS
+# ──────────────────────────────────────────────────────────────
+
+
+@runtime_checkable
+class _CandleBasedStrategy(Protocol):
+    """
+    Structural type for strategies that need full OHLCV data instead of
+    just closes (e.g. VWAPStrategy.generate_signal_from_candles) —
+    used only so mypy can narrow self.strategy's type in
+    _generate_signals() below.
+
+    @runtime_checkable makes isinstance(x, _CandleBasedStrategy) check
+    for the presence of a callable generate_signal_from_candles
+    attribute, i.e. the exact same test hasattr(x,
+    "generate_signal_from_candles") performed before — this is a
+    typing-only change, not a behavior change.
+    """
+
+    def generate_signal_from_candles(
+        self, candles: list[list[float]]
+    ) -> str: ...
 
 
 # ──────────────────────────────────────────────────────────────
@@ -43,6 +69,18 @@ class BacktestResult:
     strategy_name: str = ""
     symbol: str = ""
     candles_tested: int = 0
+
+    # ── Metadata (added for reporting; never used in trade simulation) ──
+    # These are informational only — they describe the conditions the
+    # backtest ran under, so PerformanceAnalyser can compute metrics
+    # like Estimated Slippage Cost and Exposure Time without having to
+    # assume anything about equity_curve[0] or re-derive the time span
+    # from trades alone. Setting them does not affect pricing, fills,
+    # or any simulation output above.
+    slippage_pct: float = 0.0
+    backtest_start_time: int = 0
+    backtest_end_time: int = 0
+    backtest_initial_capital: float = 0.0
 
     def __str__(self) -> str:
         return (
@@ -111,6 +149,10 @@ class Backtester:
                 strategy_name=self.strategy.name,
                 symbol=self.symbol,
                 candles_tested=len(candles),
+                slippage_pct=self.slippage_pct,
+                backtest_initial_capital=self.initial_capital,
+                backtest_start_time=int(candles[0][0]) if candles else 0,
+                backtest_end_time=int(candles[-1][0]) if candles else 0,
             )
 
         df = self._build_dataframe(candles)
@@ -122,7 +164,9 @@ class Backtester:
 
         trades = self._simulate_trades(df)
 
-        result = self._build_result(trades, len(candles))
+        start_time = int(df["timestamp"].iloc[0])
+        end_time = int(df["timestamp"].iloc[-1])
+        result = self._build_result(trades, len(candles), start_time, end_time)
 
         logger.info(
             "Backtest complete: %d trades, PnL: %+.2f, win rate: %.1f%%",
@@ -219,15 +263,19 @@ class Backtester:
         closes = df["close"].tolist()
         signals = []
 
-        use_candles = hasattr(self.strategy, "generate_signal_from_candles")
-        candles = (
+        use_candles = isinstance(self.strategy, _CandleBasedStrategy)
+        candles: list[list[float]] | None = (
             df[["timestamp", "open", "high", "low", "close", "volume"]].values.tolist()
             if use_candles
             else None
         )
 
         for i in range(len(closes)):
-            if use_candles:
+            if (
+                use_candles
+                and candles is not None
+                and isinstance(self.strategy, _CandleBasedStrategy)
+            ):
                 signal = self.strategy.generate_signal_from_candles(candles[: i + 1])
             else:
                 signal = self.strategy.generate_signal(closes[: i + 1])
@@ -254,8 +302,14 @@ class Backtester:
 
         for row in df.itertuples():
             exec_signal = getattr(row, "exec_signal", None)
-            fill_price = row.fill_price
-            ts = row.timestamp
+            # pandas-stubs types itertuples() row fields as a very broad
+            # scalar union (it can't know per-field dtypes statically).
+            # At runtime these are always real numpy floats/ints from
+            # _build_dataframe()'s explicit astype() calls — cast(Any, ...)
+            # narrows for mypy without changing the runtime value passed
+            # to float()/int().
+            fill_price = float(cast(Any, row.fill_price))
+            ts = int(cast(Any, row.timestamp))
 
             if pd.isna(exec_signal):
                 continue
@@ -272,8 +326,8 @@ class Backtester:
 
                 trades.append(
                     Trade(
-                        entry_time=int(entry_time),
-                        exit_time=int(ts),
+                        entry_time=entry_time,
+                        exit_time=ts,
                         entry_price=entry_price,
                         exit_price=exit_price,
                         size=self.position_size,
@@ -285,13 +339,13 @@ class Backtester:
 
         if in_position and len(df) > 0:
             last = df.iloc[-1]
-            exit_price = float(last["close"]) * (1 - self.slippage_pct)
+            exit_price = float(cast(Any, last["close"])) * (1 - self.slippage_pct)
             pnl = (exit_price - entry_price) * self.position_size
             pnl_pct = (exit_price - entry_price) / entry_price
             trades.append(
                 Trade(
-                    entry_time=int(entry_time),
-                    exit_time=int(last["timestamp"]),
+                    entry_time=entry_time,
+                    exit_time=int(cast(Any, last["timestamp"])),
                     entry_price=entry_price,
                     exit_price=exit_price,
                     size=self.position_size,
@@ -306,6 +360,8 @@ class Backtester:
         self,
         trades: list[Trade],
         candles_tested: int,
+        start_time: int = 0,
+        end_time: int = 0,
     ) -> BacktestResult:
         if not trades:
             return BacktestResult(
@@ -313,6 +369,10 @@ class Backtester:
                 symbol=self.symbol,
                 candles_tested=candles_tested,
                 equity_curve=[self.initial_capital],
+                slippage_pct=self.slippage_pct,
+                backtest_initial_capital=self.initial_capital,
+                backtest_start_time=start_time,
+                backtest_end_time=end_time,
             )
 
         pnl_arr = np.array([t.pnl for t in trades], dtype=np.float64)
@@ -350,6 +410,10 @@ class Backtester:
             strategy_name=self.strategy.name,
             symbol=self.symbol,
             candles_tested=candles_tested,
+            slippage_pct=self.slippage_pct,
+            backtest_initial_capital=self.initial_capital,
+            backtest_start_time=start_time,
+            backtest_end_time=end_time,
         )
 
     def _calculate_max_drawdown(self, equity_curve: list[float]) -> float:
