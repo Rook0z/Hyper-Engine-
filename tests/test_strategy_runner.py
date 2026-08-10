@@ -152,9 +152,7 @@ def test_run_out_of_sample_test_returns_report_with_correct_split():
     candles = _trending_then_reversing_candles()
     report = sr.run_out_of_sample_test(candles, in_sample_ratio=0.7)
 
-    assert len(report.split.in_sample) + len(report.split.out_of_sample) == len(
-        candles
-    )
+    assert len(report.split.in_sample) + len(report.split.out_of_sample) == len(candles)
     assert report.split.in_sample == candles[: report.split.split_index]
     assert report.split.out_of_sample == candles[report.split.split_index :]
 
@@ -206,9 +204,7 @@ def test_run_out_of_sample_test_out_of_sample_result_uses_only_out_of_sample_can
     candles = _trending_then_reversing_candles()
     report = sr.run_out_of_sample_test(candles, in_sample_ratio=0.7)
 
-    assert report.out_of_sample_result.candles_tested == len(
-        report.split.out_of_sample
-    )
+    assert report.out_of_sample_result.candles_tested == len(report.split.out_of_sample)
     assert report.in_sample_result.candles_tested == len(report.split.in_sample)
 
 
