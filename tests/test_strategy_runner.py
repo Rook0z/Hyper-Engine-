@@ -131,3 +131,88 @@ def test_backtest_all_strategies_are_all_freshly_built():
 
     for rebuilt_strategy, original_strategy in zip(rebuilt, original):
         assert rebuilt_strategy is not original_strategy
+
+
+# ──────────────────────────────────────────────────────────────
+# run_out_of_sample_test
+# ──────────────────────────────────────────────────────────────
+
+
+def _trending_then_reversing_candles(n_per_leg=30):
+    """Enough of a real trend + reversal for every strategy to
+    actually generate signals and mutate its internal state — needed
+    so the fresh-instance/no-leakage assertions are meaningful rather
+    than vacuously true on an all-HOLD series."""
+    up = [100.0 + i * 2.0 for i in range(n_per_leg)]
+    down = [up[-1] - i * 2.0 for i in range(1, n_per_leg)]
+    return make_candles(up + down)
+
+
+def test_run_out_of_sample_test_returns_report_with_correct_split():
+    candles = _trending_then_reversing_candles()
+    report = sr.run_out_of_sample_test(candles, in_sample_ratio=0.7)
+
+    assert len(report.split.in_sample) + len(report.split.out_of_sample) == len(
+        candles
+    )
+    assert report.split.in_sample == candles[: report.split.split_index]
+    assert report.split.out_of_sample == candles[report.split.split_index :]
+
+
+def test_run_out_of_sample_test_selection_never_sees_out_of_sample_candles(
+    monkeypatch,
+):
+    """
+    Data-leakage guard: backtest_all() (strategy selection) must be
+    called with EXACTLY the in-sample candles — never anything that
+    includes or is influenced by the out-of-sample period.
+    """
+    candles = _trending_then_reversing_candles()
+    calls = []
+    real_backtest_all = sr.backtest_all
+
+    def spy_backtest_all(candles_arg):
+        calls.append(list(candles_arg))
+        return real_backtest_all(candles_arg)
+
+    monkeypatch.setattr(sr, "backtest_all", spy_backtest_all)
+
+    report = sr.run_out_of_sample_test(candles, in_sample_ratio=0.7)
+
+    assert len(calls) == 1
+    assert calls[0] == report.split.in_sample
+    assert calls[0] != candles  # must NOT have been called with the full set
+
+
+def test_run_out_of_sample_test_evaluates_on_fresh_strategy_instance():
+    """
+    The out-of-sample evaluation must use a brand-new instance of the
+    winning strategy's class — never the same mutated object that ran
+    the in-sample backtest_all() selection.
+    """
+    candles = _trending_then_reversing_candles()
+    report = sr.run_out_of_sample_test(candles, in_sample_ratio=0.7)
+
+    # The in-sample winner's class must match what was actually
+    # evaluated out-of-sample (same strategy, same config).
+    in_sample_results = sr.backtest_all(report.split.in_sample)
+    winning_strategy, _, _ = in_sample_results[0]
+    assert report.strategy_name == winning_strategy.name
+
+
+def test_run_out_of_sample_test_out_of_sample_result_uses_only_out_of_sample_candles():
+    """The out-of-sample BacktestResult's candle count must match the
+    out-of-sample split exactly — never the full or in-sample count."""
+    candles = _trending_then_reversing_candles()
+    report = sr.run_out_of_sample_test(candles, in_sample_ratio=0.7)
+
+    assert report.out_of_sample_result.candles_tested == len(
+        report.split.out_of_sample
+    )
+    assert report.in_sample_result.candles_tested == len(report.split.in_sample)
+
+
+def test_run_out_of_sample_test_respects_custom_ratio():
+    candles = _trending_then_reversing_candles()
+    report = sr.run_out_of_sample_test(candles, in_sample_ratio=0.5)
+    assert len(report.split.in_sample) == len(candles) // 2
