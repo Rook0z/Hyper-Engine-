@@ -185,7 +185,7 @@ class OpenOrder(HLBaseModel):
 
 
 class OrderStatusData(HLBaseModel):
-    """The inner data of an order status response."""
+    """The order's own fields, nested inside the order-status response."""
 
     coin: str
     side: str
@@ -197,15 +197,46 @@ class OrderStatusData(HLBaseModel):
     cloid: str | None = None
 
 
-class OrderStatus(HLBaseModel):
+class OrderStatusInfo(HLBaseModel):
     """
-    Response from {"type": "orderStatus", "oid": 123}.
-    status is one of: "open", "filled", "canceled", "triggered", "rejected", "marginCanceled"
+    The inner "order" object of an orderStatus response — the order's
+    own fields plus its real fill status.
     """
 
     order: OrderStatusData
     status: str
     statusTimestamp: int
+
+
+class OrderStatus(HLBaseModel):
+    """
+    Response from {"type": "orderStatus", "oid": 123}.
+
+    IMPORTANT — this response is double-nested. The TOP-LEVEL `status`
+    is only "order" (the oid was found) or "unknownOid" (not found) —
+    it is NEVER "filled"/"open"/etc. The real per-order fill status is
+    nested one level deeper, at `.order.status`, with the order's own
+    fields nested one level deeper still, at `.order.order`:
+
+        {
+          "status": "order",
+          "order": {
+            "order": {"coin": ..., "sz": ..., "oid": ..., ...},
+            "status": "filled",   # one of: open, filled, canceled,
+                                   # triggered, rejected, marginCanceled
+            "statusTimestamp": ...
+          }
+        }
+
+    account.get_order_status() returns the raw dict rather than parsing
+    through this model (see execution/testnet_executor.py's
+    _parse_order_status(), which reads this same nested shape directly)
+    — this model exists so the true shape is documented accurately for
+    any future caller that does want a typed response.
+    """
+
+    status: str
+    order: OrderStatusInfo | None = None
 
 
 # ──────────────────────────────────────────────────────────────

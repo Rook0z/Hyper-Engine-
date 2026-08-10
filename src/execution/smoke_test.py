@@ -108,6 +108,25 @@ def main() -> None:
     else:
         print("  SELL : NOT submitted (BUY did not fill)")
     print("=" * 65)
+
+    buy_filled = buy_result.status == "filled"
+    sell_filled = sell_result is not None and sell_result.status == "filled"
+
+    if buy_filled and sell_filled:
+        print("\n  SMOKE TEST COMPLETE — BUY and SELL both confirmed filled.")
+    elif buy_filled and not sell_filled:
+        print(
+            "\n  SMOKE TEST INCOMPLETE — BUY was filled but SELL is "
+            "UNRESOLVED.\n"
+            "  Do NOT treat this as a successful cycle. Check the open "
+            "position on Hyperliquid TESTNET and close it manually if needed."
+        )
+    else:
+        print(
+            "\n  SMOKE TEST INCOMPLETE — BUY was not confirmed filled. "
+            "SELL was never submitted."
+        )
+
     print(
         "\nCheck your Hyperliquid TESTNET account — Open Orders / Order "
         "History / Trade History / Positions — to confirm.\n"

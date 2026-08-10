@@ -8,6 +8,7 @@ from hyperliquid.responses import (
     L2Book,
     Meta,
     OpenOrder,
+    OrderStatus,
     SpotAssetMeta,
     SpotMeta,
 )
@@ -166,6 +167,43 @@ def test_open_order_with_cloid():
     }
     order = OpenOrder(**data)
     assert order.cloid == "0x1234567890abcdef1234567890abcdef"
+
+
+# ──────────────────────────────────────────────────────────────
+# ORDER STATUS (double-nested response shape)
+# ──────────────────────────────────────────────────────────────
+
+
+def test_order_status_valid_filled():
+    data = {
+        "status": "order",
+        "order": {
+            "order": {
+                "coin": "BTC",
+                "side": "B",
+                "limitPx": "68215",
+                "sz": "0.001",
+                "oid": 12345,
+                "timestamp": 1708622398623,
+                "origSz": "0.001",
+            },
+            "status": "filled",
+            "statusTimestamp": 1708622398700,
+        },
+    }
+    result = OrderStatus(**data)
+    # Top-level status is the found/not-found indicator, NOT the fill status.
+    assert result.status == "order"
+    assert result.order is not None
+    assert result.order.status == "filled"
+    assert result.order.order.sz == "0.001"
+
+
+def test_order_status_unknown_oid_has_no_order():
+    data = {"status": "unknownOid"}
+    result = OrderStatus(**data)
+    assert result.status == "unknownOid"
+    assert result.order is None
 
 
 # ──────────────────────────────────────────────────────────────

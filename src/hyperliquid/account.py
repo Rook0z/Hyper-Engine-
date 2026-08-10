@@ -167,6 +167,48 @@ class HyperliquidAccount:
         logger.debug("Fetched %d fills", len(fills))
         return fills
 
+    def get_raw_fills(
+        self,
+        start_time: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Like get_fills(), but returns RAW dicts instead of validating
+        each one through the Fill model.
+
+        Used for order-fill confirmation (see
+        execution.testnet_executor.TestnetExecutor), where a missed
+        fill is safety-relevant (it gates whether SELL is submitted).
+        If the real API's field names/types ever drift from what the
+        Fill model expects, get_fills() would raise a validation error
+        that — depending on the caller — could be silently swallowed
+        and look identical to "no fills yet". Raw dicts let the caller
+        extract exactly the fields it needs via .get() and degrade
+        gracefully (keep polling, eventually a clear timeout) instead
+        of failing invisibly.
+
+        Args:
+            start_time: Optional start timestamp in milliseconds.
+
+        Returns:
+            List of raw fill dicts, newest first, exactly as returned
+            by the API — no validation, no field renaming.
+        """
+        payload: dict[str, Any] = {
+            "type": "userFills",
+            "user": self._account_address,
+        }
+        if start_time is not None:
+            payload["startTime"] = start_time
+
+        logger.info("TESTNET userFills request payload=%r", payload)
+        raw = self._client.info(payload)
+        logger.info(
+            "TESTNET userFills raw response (%d items): %r",
+            len(raw) if isinstance(raw, list) else 0,
+            raw,
+        )
+        return raw
+
     def get_funding_history(
         self,
         start_time: int,
