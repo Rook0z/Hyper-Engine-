@@ -17,6 +17,10 @@ from strategies.vwap_strategy import VWAPStrategy
 from strategies.base_strategy import BaseStrategy
 from backtester.backtester import Backtester, BacktestResult
 from backtester.performance import PerformanceAnalyser, PerformanceReport
+from backtester.out_of_sample import (
+    OutOfSampleReport,
+    split_in_out_of_sample,
+)
 from risk.risk_manager import RiskManager
 from core.trade_logger import TradeLogger
 from execution.testnet_executor import TestnetExecutionError, TestnetExecutor
@@ -249,6 +253,111 @@ def backtest_all(
 
     results.sort(key=lambda x: x[2].sharpe_ratio, reverse=True)
     return results
+
+
+# ──────────────────────────────────────────────────────────────
+# OUT-OF-SAMPLE TEST
+#
+# Strategy SELECTION uses ONLY the in-sample split (via backtest_all(),
+# unchanged, called with in_sample candles only). The winning
+# strategy's out-of-sample evaluation then uses a completely FRESH
+# instance (via _build_strategy(), unchanged) run on the disjoint
+# out-of-sample split — never the same mutable object that ran the
+# in-sample backtest, for the same reason paper_trade() never reuses
+# the backtested instance (see _build_strategy()'s docstring): shared
+# instance state would leak information/behavior from one period into
+# the other, which is exactly what out-of-sample testing exists to
+# prevent.
+# ──────────────────────────────────────────────────────────────
+
+
+def run_out_of_sample_test(
+    candles: list[list],
+    in_sample_ratio: float = 0.7,
+) -> OutOfSampleReport:
+    """
+    Runs a full out-of-sample test: splits `candles` chronologically,
+    selects a strategy using ONLY the in-sample period, then evaluates
+    that same strategy (fresh instance, same class/config) on the
+    disjoint out-of-sample period it had no influence over.
+
+    Data leakage prevention:
+      - The split itself is strictly chronological (see
+        split_in_out_of_sample()) — never randomized, so no
+        out-of-sample candle can end up earlier than any in-sample one.
+      - backtest_all() (strategy selection) is called with ONLY
+        split.in_sample — the out-of-sample candles are not created
+        until after selection has already happened, so they cannot
+        possibly influence which strategy is chosen.
+      - The out-of-sample evaluation uses a brand-new strategy instance
+        from _build_strategy(), never the mutated instance that ran
+        the in-sample backtest — so no signal-dedup state or other
+        internal state carries across the two periods.
+
+    Args:
+        candles: Full OHLCV history, sorted oldest -> newest.
+        in_sample_ratio: Fraction allocated to in-sample selection.
+                         See split_in_out_of_sample().
+
+    Returns:
+        OutOfSampleReport with both periods' BacktestResult and
+        PerformanceReport, plus the split itself.
+
+    Raises:
+        ValueError: propagated from split_in_out_of_sample() if the
+                    ratio or candle count is invalid.
+    """
+    split = split_in_out_of_sample(candles, in_sample_ratio=in_sample_ratio)
+
+    logger.info(
+        "Out-of-sample split: %d in-sample candles, %d out-of-sample "
+        "candles (ratio=%.2f)",
+        len(split.in_sample),
+        len(split.out_of_sample),
+        in_sample_ratio,
+    )
+
+    # SELECTION — in-sample only. backtest_all() never sees
+    # split.out_of_sample at all in this call.
+    in_sample_results = backtest_all(split.in_sample)
+    winning_strategy, in_sample_result, in_sample_report = in_sample_results[0]
+
+    logger.info(
+        "In-sample winner: %s (sharpe=%.4f, trades=%d)",
+        winning_strategy.name,
+        in_sample_report.sharpe_ratio,
+        in_sample_report.num_trades,
+    )
+
+    # EVALUATION — fresh instance of the SAME class/config, run on the
+    # disjoint out-of-sample period only.
+    oos_strategy = _build_strategy(type(winning_strategy))
+    analyser = PerformanceAnalyser()
+    oos_backtester = Backtester(
+        strategy=oos_strategy,
+        initial_capital=settings.initial_capital,
+        position_size=settings.position_size,
+        slippage_pct=settings.slippage_pct,
+        symbol=settings.symbol,
+    )
+    out_of_sample_result = oos_backtester.run(split.out_of_sample)
+    out_of_sample_report = analyser.analyse(out_of_sample_result)
+
+    logger.info(
+        "Out-of-sample result: %s (sharpe=%.4f, trades=%d)",
+        oos_strategy.name,
+        out_of_sample_report.sharpe_ratio,
+        out_of_sample_report.num_trades,
+    )
+
+    return OutOfSampleReport(
+        strategy_name=winning_strategy.name,
+        split=split,
+        in_sample_result=in_sample_result,
+        in_sample_report=in_sample_report,
+        out_of_sample_result=out_of_sample_result,
+        out_of_sample_report=out_of_sample_report,
+    )
 
 
 # ──────────────────────────────────────────────────────────────
