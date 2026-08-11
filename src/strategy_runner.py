@@ -21,6 +21,11 @@ from backtester.out_of_sample import (
     OutOfSampleReport,
     split_in_out_of_sample,
 )
+from backtester.walk_forward import (
+    WalkForwardReport,
+    WalkForwardWindowResult,
+    generate_walk_forward_windows,
+)
 from risk.risk_manager import RiskManager
 from core.trade_logger import TradeLogger
 from execution.testnet_executor import TestnetExecutionError, TestnetExecutor
@@ -358,6 +363,127 @@ def run_out_of_sample_test(
         out_of_sample_result=out_of_sample_result,
         out_of_sample_report=out_of_sample_report,
     )
+
+
+# ──────────────────────────────────────────────────────────────
+# WALK-FORWARD TEST
+#
+# Repeated out-of-sample testing across a rolling sequence of
+# train/test windows (see backtester/walk_forward.py for the pure
+# window-generation and aggregation logic). Per window, this applies
+# the exact same leakage-prevention pattern as
+# run_out_of_sample_test() above: backtest_all() (selection) sees only
+# that window's train candles, and evaluation uses a fresh
+# _build_strategy() instance on that window's disjoint test candles —
+# never the mutated selection instance, and never shared across
+# windows either.
+# ──────────────────────────────────────────────────────────────
+
+
+def run_walk_forward_test(
+    candles: list[list],
+    train_window_size: int,
+    test_window_size: int,
+    step_size: int | None = None,
+) -> WalkForwardReport:
+    """
+    Runs a full walk-forward test: generates a rolling sequence of
+    train/test windows, and for each one selects a strategy using ONLY
+    that window's train period (via backtest_all(), unchanged) then
+    evaluates a fresh instance of the winner (via _build_strategy(),
+    unchanged) on that window's disjoint test period. Results are
+    aggregated into a WalkForwardReport.
+
+    Data leakage prevention (per window, identical guarantees to
+    run_out_of_sample_test(), repeated across every window):
+      - generate_walk_forward_windows() produces strictly chronological,
+        non-overlapping train/test pairs within each window.
+      - backtest_all() (selection) is called with ONLY that window's
+        train candles.
+      - Test-period evaluation uses a brand-new strategy instance from
+        _build_strategy() — never the mutated instance that ran that
+        window's own train-period selection, and never shared with any
+        other window either (each window gets its own fresh instance).
+
+    Args:
+        candles: Full OHLCV history, sorted oldest -> newest.
+        train_window_size: Candles per training window.
+        test_window_size: Candles per test window.
+        step_size: Window advance per step. Defaults to
+                   test_window_size. See generate_walk_forward_windows().
+
+    Returns:
+        WalkForwardReport with one WalkForwardWindowResult per window
+        plus aggregate statistics.
+
+    Raises:
+        ValueError: if the parameters are invalid (propagated from
+                    generate_walk_forward_windows()), or if there isn't
+                    enough data to form even one window.
+    """
+    windows = generate_walk_forward_windows(
+        candles,
+        train_window_size=train_window_size,
+        test_window_size=test_window_size,
+        step_size=step_size,
+    )
+    if not windows:
+        raise ValueError(
+            f"Not enough candles ({len(candles)}) to form even one walk-forward "
+            f"window (need at least {train_window_size + test_window_size})."
+        )
+
+    logger.info(
+        "Walk-forward test: %d windows (train=%d, test=%d, step=%d)",
+        len(windows),
+        train_window_size,
+        test_window_size,
+        step_size or test_window_size,
+    )
+
+    analyser = PerformanceAnalyser()
+    window_results: list[WalkForwardWindowResult] = []
+
+    for window in windows:
+        # SELECTION — this window's train period only.
+        train_results = backtest_all(window.train)
+        winning_strategy, train_result, train_report = train_results[0]
+
+        # EVALUATION — fresh instance, this window's test period only.
+        test_strategy = _build_strategy(type(winning_strategy))
+        test_backtester = Backtester(
+            strategy=test_strategy,
+            initial_capital=settings.initial_capital,
+            position_size=settings.position_size,
+            slippage_pct=settings.slippage_pct,
+            symbol=settings.symbol,
+        )
+        test_result = test_backtester.run(window.test)
+        test_report = analyser.analyse(test_result)
+
+        logger.info(
+            "  Window %d: train_winner=%s train_sharpe=%.4f -> "
+            "test_trades=%d test_pnl=%+.2f test_sharpe=%.4f",
+            window.window_index,
+            winning_strategy.name,
+            train_report.sharpe_ratio,
+            test_report.num_trades,
+            test_report.total_pnl,
+            test_report.sharpe_ratio,
+        )
+
+        window_results.append(
+            WalkForwardWindowResult(
+                window=window,
+                strategy_name=winning_strategy.name,
+                train_result=train_result,
+                train_report=train_report,
+                test_result=test_result,
+                test_report=test_report,
+            )
+        )
+
+    return WalkForwardReport(window_results=window_results)
 
 
 # ──────────────────────────────────────────────────────────────
