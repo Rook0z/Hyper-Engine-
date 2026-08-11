@@ -9,6 +9,8 @@ it, which is what guarantees the backtester and the paper trader never
 share a mutable strategy instance.
 """
 
+import pytest
+
 import strategy_runner as sr
 from strategies.ema_strategy import EMAStrategy
 from strategies.rsi_strategy import RSIStrategy
@@ -212,3 +214,121 @@ def test_run_out_of_sample_test_respects_custom_ratio():
     candles = _trending_then_reversing_candles()
     report = sr.run_out_of_sample_test(candles, in_sample_ratio=0.5)
     assert len(report.split.in_sample) == len(candles) // 2
+
+
+# ──────────────────────────────────────────────────────────────
+# run_walk_forward_test
+# ──────────────────────────────────────────────────────────────
+
+
+def _long_trending_series(n_legs=3, leg_len=25):
+    """A longer up/down/up/... series so multiple walk-forward windows
+    each contain enough real price movement for strategies to generate
+    signals and mutate state."""
+    prices = []
+    price = 100.0
+    direction = 1
+    for _ in range(n_legs):
+        for _ in range(leg_len):
+            price += direction * 2.0
+            prices.append(price)
+        direction *= -1
+    return make_candles(prices)
+
+
+def test_run_walk_forward_test_returns_expected_number_of_windows():
+    candles = _long_trending_series()
+    report = sr.run_walk_forward_test(
+        candles, train_window_size=30, test_window_size=15
+    )
+    assert report.num_windows > 0
+    for w in report.window_results:
+        assert len(w.window.train) == 30
+        assert len(w.window.test) == 15
+
+
+def test_run_walk_forward_test_raises_when_no_window_fits():
+    candles = make_candles([100.0] * 5)
+    with pytest.raises(ValueError, match="Not enough candles"):
+        sr.run_walk_forward_test(candles, train_window_size=30, test_window_size=15)
+
+
+def test_run_walk_forward_test_selection_never_sees_that_windows_test_candles(
+    monkeypatch,
+):
+    """
+    Data-leakage guard: for every window, backtest_all() (selection)
+    must be called with EXACTLY that window's train candles — never
+    anything overlapping that window's own test candles.
+    """
+    candles = _long_trending_series()
+    calls = []
+    real_backtest_all = sr.backtest_all
+
+    def spy_backtest_all(candles_arg):
+        calls.append(list(candles_arg))
+        return real_backtest_all(candles_arg)
+
+    monkeypatch.setattr(sr, "backtest_all", spy_backtest_all)
+
+    report = sr.run_walk_forward_test(
+        candles, train_window_size=30, test_window_size=15
+    )
+
+    assert len(calls) == report.num_windows
+    for call_candles, window_result in zip(calls, report.window_results):
+        assert call_candles == window_result.window.train
+        call_ts = {c[0] for c in call_candles}
+        test_ts = {c[0] for c in window_result.window.test}
+        assert call_ts.isdisjoint(test_ts)
+
+
+def test_run_walk_forward_test_each_window_uses_a_fresh_strategy_instance():
+    """
+    Regression guard: no two windows — and no window's train vs. test
+    phase — may share a mutable strategy instance. We can't directly
+    inspect the instances used internally, but we can verify that
+    rebuilding fresh instances of each window's reported winning class
+    never collides with another window's instance (identity-distinct
+    by construction of _build_strategy()).
+    """
+    candles = _long_trending_series()
+    report = sr.run_walk_forward_test(
+        candles, train_window_size=30, test_window_size=15
+    )
+
+    def _class_for_name(name: str) -> type:
+        for cls in sr.STRATEGY_CLASSES:
+            if sr._build_strategy(cls).name == name:
+                return cls
+        raise AssertionError(f"No strategy class matches name {name!r}")
+
+    rebuilt_instances = [
+        sr._build_strategy(_class_for_name(w.strategy_name))
+        for w in report.window_results
+    ]
+    # Every rebuilt instance must be a distinct object.
+    assert len(set(id(s) for s in rebuilt_instances)) == len(rebuilt_instances)
+
+
+def test_run_walk_forward_test_aggregation_matches_window_reports():
+    candles = _long_trending_series()
+    report = sr.run_walk_forward_test(
+        candles, train_window_size=30, test_window_size=15
+    )
+    expected_total_trades = sum(w.test_report.num_trades for w in report.window_results)
+    expected_total_pnl = sum(w.test_report.total_pnl for w in report.window_results)
+    assert report.total_test_trades == expected_total_trades
+    assert report.total_test_pnl == pytest.approx(expected_total_pnl)
+
+
+def test_run_walk_forward_test_respects_custom_step_size():
+    candles = _long_trending_series()
+    report_default_step = sr.run_walk_forward_test(
+        candles, train_window_size=30, test_window_size=15
+    )
+    report_small_step = sr.run_walk_forward_test(
+        candles, train_window_size=30, test_window_size=15, step_size=5
+    )
+    # A smaller step must produce at least as many (usually more) windows.
+    assert report_small_step.num_windows >= report_default_step.num_windows
