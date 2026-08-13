@@ -332,3 +332,203 @@ def test_run_walk_forward_test_respects_custom_step_size():
     )
     # A smaller step must produce at least as many (usually more) windows.
     assert report_small_step.num_windows >= report_default_step.num_windows
+
+
+# ──────────────────────────────────────────────────────────────
+# clean_data — EXISTING BEHAVIOR PRESERVED
+# ──────────────────────────────────────────────────────────────
+
+
+def test_clean_data_keeps_all_valid_candles():
+    candles = make_candles([100.0, 101.0, 102.0, 103.0])
+    result = sr.clean_data(candles)
+    assert len(result) == 4
+
+
+def test_clean_data_empty_raises():
+    with pytest.raises(ValueError, match="No candles"):
+        sr.clean_data([])
+
+
+def test_clean_data_removes_duplicate_timestamps():
+    candles = make_candles([100.0, 101.0])
+    candles.append(candles[0])  # exact duplicate timestamp
+    result = sr.clean_data(candles)
+    timestamps = [c[0] for c in result]
+    assert len(timestamps) == len(set(timestamps))
+    assert len(result) == 2
+
+
+def test_clean_data_removes_zero_and_negative_prices():
+    candles = make_candles([100.0, 101.0])
+    candles.append(make_candle(9_999_000_000_000, 0.0, 0.0))  # zero price
+    candles.append(make_candle(9_999_100_000_000, -5.0, -5.0))  # negative price
+    result = sr.clean_data(candles)
+    assert len(result) == 2
+
+
+def test_clean_data_removes_high_less_than_low():
+    candles = make_candles([100.0])
+    bad = [9_999_000_000_000, 100.0, 90.0, 95.0, 92.0, 1.0]  # high(90) < low(95)
+    candles.append(bad)
+    result = sr.clean_data(candles)
+    assert len(result) == 1
+
+
+def test_clean_data_removes_close_outside_high_low_range():
+    candles = make_candles([100.0])
+    bad = [9_999_000_000_000, 100.0, 105.0, 95.0, 110.0, 1.0]  # close(110) > high(105)
+    candles.append(bad)
+    result = sr.clean_data(candles)
+    assert len(result) == 1
+
+
+def test_clean_data_removes_zero_volume():
+    candles = make_candles([100.0])
+    bad = [9_999_000_000_000, 100.0, 101.0, 99.0, 100.5, 0.0]
+    candles.append(bad)
+    result = sr.clean_data(candles)
+    assert len(result) == 1
+
+
+def test_clean_data_sorts_output_chronologically():
+    candles = make_candles([100.0, 101.0, 102.0])
+    shuffled = [candles[2], candles[0], candles[1]]
+    result = sr.clean_data(shuffled)
+    assert [c[0] for c in result] == sorted(c[0] for c in result)
+
+
+# ──────────────────────────────────────────────────────────────
+# clean_data — NEW ROBUSTNESS: MALFORMED / MISSING / INVALID CANDLES
+# ───────────────────────────────────────────────────────────
+
+
+def test_clean_data_skips_wrong_length_row_without_crashing():
+    """
+    Regression test for the original crash: a row with the wrong
+    number of fields used to raise an unhandled ValueError from tuple
+    unpacking and abort the ENTIRE clean_data() call. It must now be
+    skipped like any other invalid candle.
+    """
+    candles = make_candles([100.0, 101.0])
+    candles.append([9_999_000_000_000, 100.0, 101.0])  # only 3 fields
+    result = sr.clean_data(candles)  # must not raise
+    assert len(result) == 2
+
+
+def test_clean_data_skips_too_many_fields_row():
+    candles = make_candles([100.0])
+    candles.append([9_999_000_000_000, 100.0, 101.0, 99.0, 100.5, 1.0, "extra"])
+    result = sr.clean_data(candles)
+    assert len(result) == 1
+
+
+def test_clean_data_skips_none_values_without_crashing():
+    """A field of None used to raise an unhandled TypeError from the
+    unpacking/comparison logic."""
+    candles = make_candles([100.0])
+    candles.append([9_999_000_000_000, None, 101.0, 99.0, 100.5, 1.0])
+    result = sr.clean_data(candles)
+    assert len(result) == 1
+
+
+def test_clean_data_skips_non_numeric_string_values():
+    candles = make_candles([100.0])
+    candles.append([9_999_000_000_000, "not-a-number", 101.0, 99.0, 100.5, 1.0])
+    result = sr.clean_data(candles)
+    assert len(result) == 1
+
+
+def test_clean_data_rejects_nan_price():
+    """
+    Regression test for a subtle correctness bug: NaN comparisons are
+    always False in Python, so `nan <= 0` is False — meaning a NaN
+    open/high/low/close previously SLIPPED THROUGH the zero/negative
+    price filter undetected. An explicit finiteness check is required.
+    """
+    candles = make_candles([100.0])
+    candles.append([9_999_000_000_000, float("nan"), 101.0, 99.0, 100.5, 1.0])
+    result = sr.clean_data(candles)
+    assert len(result) == 1
+
+
+def test_clean_data_rejects_infinite_price():
+    candles = make_candles([100.0])
+    candles.append([9_999_000_000_000, float("inf"), 101.0, 99.0, 100.5, 1.0])
+    result = sr.clean_data(candles)
+    assert len(result) == 1
+
+
+def test_clean_data_rejects_nan_volume():
+    candles = make_candles([100.0])
+    candles.append([9_999_000_000_000, 100.0, 101.0, 99.0, 100.5, float("nan")])
+    result = sr.clean_data(candles)
+    assert len(result) == 1
+
+
+def test_clean_data_mixed_malformed_and_valid_rows():
+    """Several different kinds of bad rows mixed with good ones — only
+    the good ones survive, and nothing crashes."""
+    candles = make_candles([100.0, 101.0, 102.0])
+    candles.append([9_999_000_000_000, 100.0])  # wrong length
+    candles.append([9_999_100_000_000, None, 101.0, 99.0, 100.5, 1.0])  # None
+    candles.append(
+        [9_999_200_000_000, float("nan"), 101.0, 99.0, 100.5, 1.0]
+    )  # NaN
+    candles.append([9_999_300_000_000, -5.0, 101.0, 99.0, 100.5, 1.0])  # negative
+    result = sr.clean_data(candles)
+    assert len(result) == 3
+
+
+# ───────────────────────────────────────────────────────────
+# _log_timestamp_gaps — GAP DETECTION IS INFORMATIONAL ONLY
+# ───────────────────────────────────────────────────────────
+
+
+def test_log_timestamp_gaps_does_not_raise_on_short_input():
+    sr._log_timestamp_gaps([])  # must not raise
+    sr._log_timestamp_gaps([make_candle(1000, 100.0, 100.0)])
+    sr._log_timestamp_gaps(
+        [make_candle(1000, 100.0, 100.0), make_candle(2000, 100.0, 100.0)]
+    )
+
+
+def test_log_timestamp_gaps_does_not_mutate_input():
+    """Gap detection is purely informational — the candle list passed
+    in must be completely unchanged afterward."""
+    candles = make_candles([100.0, 101.0, 102.0, 103.0, 104.0])
+    before = [list(c) for c in candles]
+    sr._log_timestamp_gaps(candles)
+    assert candles == before
+
+
+def test_clean_data_with_a_gap_still_returns_all_valid_candles(caplog):
+    """
+    A gap in the timestamp sequence must be logged, but the returned
+    candle list must still contain every valid candle that WAS present
+    — gap detection never removes or fabricates data.
+    """
+    import logging as _logging
+
+    regular = make_candles([100.0, 101.0, 102.0], interval_ms=3_600_000)
+    # Jump far ahead for the next candle — a clear gap relative to the
+    # established 1h modal interval.
+    far_future = make_candle(regular[-1][0] + 20 * 3_600_000, 103.0, 103.0)
+    candles = regular + [far_future]
+
+    with caplog.at_level(_logging.WARNING, logger="strategy_runner"):
+        result = sr.clean_data(candles)
+
+    assert len(result) == 4
+    assert any("gap" in record.message.lower() for record in caplog.records)
+
+
+def test_clean_data_no_gap_does_not_log_gap_warning(caplog):
+    import logging as _logging
+
+    candles = make_candles([100.0, 101.0, 102.0, 103.0, 104.0])
+
+    with caplog.at_level(_logging.WARNING, logger="strategy_runner"):
+        sr.clean_data(candles)
+
+    assert not any("gap" in record.message.lower() for record in caplog.records)

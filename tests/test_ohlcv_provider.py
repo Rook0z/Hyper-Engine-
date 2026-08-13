@@ -270,3 +270,110 @@ def test_latest_close_empty_raises(provider, mock_client):
     mock_client.info.return_value = []
     with pytest.raises(ValueError, match="No candles"):
         provider.latest_close("BTC")
+
+
+# ──────────────────────────────────────────────────────────────
+# _parse_candle — MALFORMED / NON-FINITE FIELDS
+# ──────────────────────────────────────────────────────────────
+
+
+def test_parse_candle_missing_field_raises_key_error(provider):
+    raw = make_raw_candle(1000000000000)
+    del raw["c"]
+    with pytest.raises(KeyError):
+        provider._parse_candle(raw)
+
+
+def test_parse_candle_none_value_raises_type_error(provider):
+    raw = make_raw_candle(1000000000000, c=None)
+    with pytest.raises(TypeError):
+        provider._parse_candle(raw)
+
+
+def test_parse_candle_non_numeric_string_raises_value_error(provider):
+    raw = make_raw_candle(1000000000000, c="not-a-number")
+    with pytest.raises(ValueError):
+        provider._parse_candle(raw)
+
+
+def test_parse_candle_nan_value_raises_value_error(provider):
+    """
+    Regression guard: NaN parses successfully via float("nan") — it
+    must be explicitly rejected as non-finite, not silently accepted.
+    """
+    raw = make_raw_candle(1000000000000, c="nan")
+    with pytest.raises(ValueError, match="non-finite"):
+        provider._parse_candle(raw)
+
+
+def test_parse_candle_infinite_value_raises_value_error(provider):
+    raw = make_raw_candle(1000000000000, h="inf")
+    with pytest.raises(ValueError, match="non-finite"):
+        provider._parse_candle(raw)
+
+
+# ──────────────────────────────────────────────────────────────
+# _fetch_one — ONE BAD CANDLE MUST NOT CRASH THE WHOLE BATCH
+# ───────────────────────────────────────────────────────────
+
+
+def test_fetch_skips_one_malformed_candle_without_crashing(provider, mock_client):
+    """
+    Regression test for the original crash: previously
+    [self._parse_candle(c) for c in raw] meant a single malformed
+    candle from the API raised and aborted the WHOLE batch. It must
+    now be skipped, keeping every other valid candle.
+    """
+    good_1 = make_raw_candle(1000000000000)
+    bad = make_raw_candle(1000003600000, c="not-a-number")
+    good_2 = make_raw_candle(1000007200000)
+    mock_client.info.return_value = [good_1, bad, good_2]
+
+    candles = provider.fetch("BTC", interval="1h", limit=10)  # must not raise
+    assert len(candles) == 2
+    timestamps = [c[0] for c in candles]
+    assert timestamps == [1000000000000, 1000007200000]
+
+
+def test_fetch_skips_missing_field_candle(provider, mock_client):
+    good = make_raw_candle(1000000000000)
+    bad = make_raw_candle(1000003600000)
+    del bad["v"]
+    mock_client.info.return_value = [good, bad]
+
+    candles = provider.fetch("BTC", interval="1h", limit=10)
+    assert len(candles) == 1
+
+
+def test_fetch_skips_nan_candle(provider, mock_client):
+    good = make_raw_candle(1000000000000)
+    bad = make_raw_candle(1000003600000, c="nan")
+    mock_client.info.return_value = [good, bad]
+
+    candles = provider.fetch("BTC", interval="1h", limit=10)
+    assert len(candles) == 1
+
+
+def test_fetch_all_malformed_returns_empty_list(provider, mock_client):
+    bad_1 = make_raw_candle(1000000000000, c="bad")
+    bad_2 = make_raw_candle(1000003600000, o=None)
+    mock_client.info.return_value = [bad_1, bad_2]
+
+    candles = provider.fetch("BTC", interval="1h", limit=10)  # must not raise
+    assert candles == []
+
+
+def test_fetch_deduplicates_within_a_single_response(provider, mock_client):
+    """
+    fetch() (a single API call) previously had no duplicate-timestamp
+    guard at all — only fetch_range() deduplicated, across paginated
+    batches. A duplicate within one response must now also be removed.
+    """
+    candle = make_raw_candle(1000000000000, c="50000")
+    duplicate = make_raw_candle(1000000000000, c="50000")
+    mock_client.info.return_value = [candle, duplicate]
+
+    candles = provider.fetch("BTC", interval="1h", limit=10)
+    timestamps = [c[0] for c in candles]
+    assert len(timestamps) == len(set(timestamps))
+    assert len(candles) == 1
