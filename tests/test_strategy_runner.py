@@ -472,9 +472,7 @@ def test_clean_data_mixed_malformed_and_valid_rows():
     candles = make_candles([100.0, 101.0, 102.0])
     candles.append([9_999_000_000_000, 100.0])  # wrong length
     candles.append([9_999_100_000_000, None, 101.0, 99.0, 100.5, 1.0])  # None
-    candles.append(
-        [9_999_200_000_000, float("nan"), 101.0, 99.0, 100.5, 1.0]
-    )  # NaN
+    candles.append([9_999_200_000_000, float("nan"), 101.0, 99.0, 100.5, 1.0])  # NaN
     candles.append([9_999_300_000_000, -5.0, 101.0, 99.0, 100.5, 1.0])  # negative
     result = sr.clean_data(candles)
     assert len(result) == 3
