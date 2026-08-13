@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
+from collections import Counter
 from typing import Protocol, runtime_checkable
 from dotenv import load_dotenv
 
@@ -124,8 +126,22 @@ def fetch_data(ohlcv: OHLCVProvider) -> list[list]:
 def clean_data(candles: list[list]) -> list[list]:
     """
     Cleans raw OHLCV candles.
-    Removes: zero/negative prices, high < low, close outside range,
-             duplicate timestamps, zero volume.
+
+    Removes: malformed rows (wrong shape, non-numeric, or non-finite
+             NaN/Infinity fields), zero/negative prices, high < low,
+             close outside the [low, high] range, duplicate
+             timestamps, zero volume.
+
+    Also detects (and logs, but never fills or fabricates) gaps in the
+    timestamp sequence, based on the MODAL interval between consecutive
+    candles — see _log_timestamp_gaps(). This is purely informational;
+    it never changes what's returned.
+
+    A malformed row (e.g. the wrong number of fields, or a field that
+    can't be parsed as a number) is skipped and counted, exactly like
+    any other invalid candle, rather than raising and aborting the
+    whole clean — one bad row from upstream should never take down an
+    otherwise-good dataset.
     """
     if not candles:
         raise ValueError("No candles to clean.")
@@ -133,9 +149,30 @@ def clean_data(candles: list[list]) -> list[list]:
     seen: set[int] = set()
     clean: list[list] = []
     removed = 0
+    malformed = 0
 
     for candle in candles:
-        ts, open_, high, low, close, volume = candle
+        try:
+            if len(candle) != 6:
+                raise ValueError(f"expected 6 fields, got {len(candle)}")
+            ts, open_, high, low, close, volume = candle
+            ts = int(ts)
+            open_ = float(open_)
+            high = float(high)
+            low = float(low)
+            close = float(close)
+            volume = float(volume)
+        except (TypeError, ValueError) as e:
+            malformed += 1
+            removed += 1
+            logger.warning("Skipping malformed candle %r: %s", candle, e)
+            continue
+
+        if not all(math.isfinite(v) for v in (open_, high, low, close, volume)):
+            malformed += 1
+            removed += 1
+            logger.warning("Skipping non-finite candle %r", candle)
+            continue
 
         if ts in seen:
             removed += 1
@@ -154,11 +191,58 @@ def clean_data(candles: list[list]) -> list[list]:
             continue
 
         seen.add(ts)
-        clean.append(candle)
+        clean.append([ts, open_, high, low, close, volume])
 
     clean.sort(key=lambda c: c[0])
-    logger.info("Data cleaned: %d kept, %d removed", len(clean), removed)
+
+    _log_timestamp_gaps(clean)
+
+    logger.info(
+        "Data cleaned: %d kept, %d removed (%d malformed)",
+        len(clean),
+        removed,
+        malformed,
+    )
     return clean
+
+
+def _log_timestamp_gaps(candles: list[list]) -> None:
+    """
+    Detects gaps in a sorted candle list's timestamp sequence and logs
+    a warning summarizing them — never mutates or filters `candles`,
+    purely informational.
+
+    The "expected" interval is the MODAL (most common) delta between
+    consecutive timestamps, not the minimum or average — robust to a
+    handful of genuine gaps skewing those simpler measures. Any delta
+    more than 1.5x the modal interval is flagged as a gap; the number
+    of likely-missing candles in each gap is estimated as
+    round(delta / modal_interval) - 1.
+    """
+    if len(candles) < 3:
+        return
+
+    deltas = [candles[i][0] - candles[i - 1][0] for i in range(1, len(candles))]
+    if not deltas:
+        return
+
+    modal_delta = Counter(deltas).most_common(1)[0][0]
+    if modal_delta <= 0:
+        return
+
+    gap_threshold = modal_delta * 1.5
+    gaps = [d for d in deltas if d > gap_threshold]
+
+    if gaps:
+        missing_estimate = sum(round(d / modal_delta) - 1 for d in gaps)
+        logger.warning(
+            "Detected %d gap(s) in candle timestamps (expected interval=%dms) "
+            "— approximately %d candle(s) may be missing. Largest gap: %dms.",
+            len(gaps),
+            modal_delta,
+            missing_estimate,
+            max(gaps),
+        )
 
 
 # ──────────────────────────────────────────────────────────────

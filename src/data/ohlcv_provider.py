@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time as _time
 from typing import Any
 
@@ -248,6 +249,15 @@ class OHLCVProvider:
         """
         Single API call to candleSnapshot.
         Converts raw candle dicts to [timestamp, o, h, l, c, v] format.
+
+        Individual malformed candles (missing/non-numeric/non-finite
+        fields) are skipped and logged rather than crashing the whole
+        batch — one bad row from the API should never take down an
+        otherwise-good response. Duplicate timestamps within a single
+        response are also removed (keeping the first occurrence),
+        defensively — fetch_range() already deduplicates across
+        paginated batches, but fetch() (a single call) previously had
+        no such guard at all.
         """
         payload = {
             "type": "candleSnapshot",
@@ -264,12 +274,48 @@ class OHLCVProvider:
         if not raw:
             return []
 
-        candles = [self._parse_candle(c) for c in raw]
+        candles: list[OHLCVRow] = []
+        skipped = 0
+        for c in raw:
+            try:
+                candles.append(self._parse_candle(c))
+            except (KeyError, TypeError, ValueError) as e:
+                skipped += 1
+                logger.warning("Skipping malformed candle from API: %r (%s)", c, e)
+        if skipped:
+            logger.warning(
+                "Skipped %d malformed candle(s) out of %d received for %s %s",
+                skipped,
+                len(raw),
+                symbol,
+                interval,
+            )
 
         # Always sort by timestamp — defensive against out-of-order responses
         candles.sort(key=lambda c: c[0])
 
-        return candles
+        # Deduplicate by timestamp (keep first occurrence) — defensive
+        # against the API returning the same candle twice in one response.
+        seen: set[int] = set()
+        deduped: list[OHLCVRow] = []
+        duplicates = 0
+        for candle in candles:
+            ts = candle[0]
+            if ts in seen:
+                duplicates += 1
+                continue
+            seen.add(ts)
+            deduped.append(candle)
+        if duplicates:
+            logger.warning(
+                "Removed %d duplicate-timestamp candle(s) within one %s %s "
+                "API response",
+                duplicates,
+                symbol,
+                interval,
+            )
+
+        return deduped
 
     def _parse_candle(self, raw: dict) -> OHLCVRow:
         """
@@ -286,15 +332,35 @@ class OHLCVProvider:
         Returns:
             [timestamp(int), open(float), high(float), low(float),
              close(float), volume(float)]
+
+        Raises:
+            KeyError:   if a required field is missing.
+            TypeError:  if a field's value can't be converted at all
+                        (e.g. None).
+            ValueError: if a field can't be parsed as a number, or
+                        parses to a non-finite value (NaN/Infinity) —
+                        callers (_fetch_one) treat all three as "skip
+                        this malformed candle", not a hard failure for
+                        the whole batch.
         """
-        return [
-            int(raw["t"]),  # timestamp — open time in ms
-            float(raw["o"]),  # open
-            float(raw["h"]),  # high
-            float(raw["l"]),  # low
-            float(raw["c"]),  # close
-            float(raw["v"]),  # volume
-        ]
+        timestamp = int(raw["t"])
+        open_ = float(raw["o"])
+        high = float(raw["h"])
+        low = float(raw["l"])
+        close = float(raw["c"])
+        volume = float(raw["v"])
+
+        for name, value in (
+            ("open", open_),
+            ("high", high),
+            ("low", low),
+            ("close", close),
+            ("volume", volume),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"non-finite {name} value: {value!r}")
+
+        return [timestamp, open_, high, low, close, volume]
 
     def _validate_interval(self, interval: str) -> None:
         """Raises ValueError if interval is not a valid Hyperliquid interval."""
