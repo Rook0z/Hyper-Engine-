@@ -71,6 +71,12 @@ class RiskManager:
             raise ValueError(
                 f"max_open_positions must be >= 1, got {max_open_positions}"
             )
+        if min_position_size <= 0:
+            raise ValueError(
+                f"min_position_size must be > 0, got {min_position_size}. "
+                f"A non-positive minimum silently disables the minimum-size "
+                f"safety floor in check_position_size()."
+            )
 
         self.account_balance = account_balance
         self.max_position_pct = max_position_pct
