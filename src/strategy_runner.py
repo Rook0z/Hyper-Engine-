@@ -637,6 +637,7 @@ def paper_trade(
     total_pnl = 0.0
     num_trades = 0
     daily_loss = 0.0
+    daily_loss_date = _current_utc_date()
     last_signal = "HOLD"
 
     run_seconds = settings.run_hours * 3600
@@ -645,6 +646,22 @@ def paper_trade(
     try:
         while time.time() - start < run_seconds:
             try:
+                # "Daily" loss must mean per-calendar-day, not
+                # cumulative for the life of a long-running process —
+                # reset when the UTC date rolls over so a bad day
+                # doesn't permanently block trading on every day after.
+                new_daily_loss, new_daily_loss_date = _reset_daily_loss_if_new_day(
+                    daily_loss, daily_loss_date
+                )
+                if new_daily_loss_date != daily_loss_date:
+                    logger.info(
+                        "New UTC day (%s) — resetting daily loss counter "
+                        "(was %.2f).",
+                        new_daily_loss_date,
+                        daily_loss,
+                    )
+                daily_loss, daily_loss_date = new_daily_loss, new_daily_loss_date
+
                 candles = ohlcv.fetch(
                     settings.symbol,
                     interval=settings.interval,
@@ -689,7 +706,7 @@ def paper_trade(
                         price=price,
                         requested_size=settings.position_size,
                         current_daily_loss=daily_loss,
-                        open_positions=0,
+                        open_positions=1 if in_position else 0,
                     )
                     if risk_result.allowed:
                         entry_price = price
@@ -870,6 +887,7 @@ def live_testnet_trade(
     filled_qty = abs(executor.get_position_size())
     entry_price = 0.0
     daily_loss = 0.0
+    daily_loss_date = _current_utc_date()
     total_pnl = 0.0
     num_trades = 0
     last_signal = "HOLD"
@@ -880,6 +898,24 @@ def live_testnet_trade(
     try:
         while time.time() - start < run_seconds:
             try:
+                # "Daily" loss must mean per-calendar-day, not
+                # cumulative for the life of a long-running process —
+                # reset when the UTC date rolls over so a bad day
+                # doesn't permanently block REAL trading on every day
+                # after (a much higher-stakes version of the same gap
+                # already fixed in paper_trade()).
+                new_daily_loss, new_daily_loss_date = _reset_daily_loss_if_new_day(
+                    daily_loss, daily_loss_date
+                )
+                if new_daily_loss_date != daily_loss_date:
+                    logger.info(
+                        "New UTC day (%s) — resetting daily loss counter "
+                        "(was %.2f).",
+                        new_daily_loss_date,
+                        daily_loss,
+                    )
+                daily_loss, daily_loss_date = new_daily_loss, new_daily_loss_date
+
                 candles = ohlcv.fetch(
                     settings.symbol, interval=settings.interval, limit=50
                 )
@@ -923,7 +959,7 @@ def live_testnet_trade(
                             price=price,
                             requested_size=settings.position_size,
                             current_daily_loss=daily_loss,
-                            open_positions=0,
+                            open_positions=1 if in_position else 0,
                         )
                         if risk_result.allowed:
                             oid = executor.submit_market_order(
@@ -1035,6 +1071,17 @@ def live_testnet_trade(
             except TestnetExecutionError as e:
                 logger.error("Execution error: %s", e)
                 trade_log.log_error(str(e), context={"type": "TestnetExecutionError"})
+            except Exception as e:
+                # Real money is at stake here — an unexpected error
+                # (a RiskManager validation error, a malformed API
+                # response that slipped past every other safeguard,
+                # anything) must never silently kill the whole live
+                # session. Log it, record it, and keep the loop alive
+                # for the next tick — mirroring paper_trade()'s
+                # existing broad-except behavior, which this function
+                # was previously missing despite handling real orders.
+                logger.exception("Unexpected error in live testnet tick: %s", e)
+                trade_log.log_error(str(e), context={"type": "Exception"})
 
             time.sleep(settings.sleep_seconds)
 
@@ -1128,6 +1175,38 @@ def _now_iso() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).isoformat()
+
+
+def _current_utc_date():
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).date()
+
+
+def _reset_daily_loss_if_new_day(
+    daily_loss: float,
+    daily_loss_date,
+    current_date=None,
+) -> tuple[float, object]:
+    """
+    Returns (daily_loss, daily_loss_date), resetting daily_loss to 0.0
+    if current_date has moved past daily_loss_date.
+
+    "Daily" loss must mean per-calendar-day, not cumulative for the
+    life of a long-running process — without this, a session spanning
+    more than one UTC day would permanently block trading on every day
+    after the first day the loss cap was hit, since daily_loss was
+    previously only ever incremented, never reset.
+
+    Pure function (current_date is injectable for testing) so this
+    logic is independently testable without needing to mock the full
+    paper_trade()/live_testnet_trade() loop.
+    """
+    if current_date is None:
+        current_date = _current_utc_date()
+    if current_date != daily_loss_date:
+        return 0.0, current_date
+    return daily_loss, daily_loss_date
 
 
 if __name__ == "__main__":
