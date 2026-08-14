@@ -530,3 +530,77 @@ def test_clean_data_no_gap_does_not_log_gap_warning(caplog):
         sr.clean_data(candles)
 
     assert not any("gap" in record.message.lower() for record in caplog.records)
+
+
+# ──────────────────────────────────────────────────────────────
+# _reset_daily_loss_if_new_day — RISK-LAYER INTEGRATION HARDENING
+#
+# Regression coverage for a real gap found during the risk-layer
+# audit: daily_loss in paper_trade()/live_testnet_trade() was only
+# ever incremented, never reset, so a session spanning more than one
+# UTC day would permanently block trading on every day after the
+# first day the loss cap was hit — "daily" meant "cumulative for the
+# life of the process" instead of "per calendar day".
+# ──────────────────────────────────────────────────────────────
+
+
+def test_reset_daily_loss_same_day_unchanged():
+    from datetime import date
+
+    today = date(2026, 1, 15)
+    loss, loss_date = sr._reset_daily_loss_if_new_day(
+        daily_loss=250.0, daily_loss_date=today, current_date=today
+    )
+    assert loss == 250.0
+    assert loss_date == today
+
+
+def test_reset_daily_loss_new_day_resets_to_zero():
+    """
+    THE regression test: a loss accumulated on one day must NOT carry
+    over and permanently block trading once a new UTC day begins.
+    """
+    from datetime import date
+
+    yesterday = date(2026, 1, 15)
+    today = date(2026, 1, 16)
+    loss, loss_date = sr._reset_daily_loss_if_new_day(
+        daily_loss=999.0, daily_loss_date=yesterday, current_date=today
+    )
+    assert loss == 0.0
+    assert loss_date == today
+
+
+def test_reset_daily_loss_multiple_days_forward_still_resets():
+    from datetime import date, timedelta
+
+    start = date(2026, 1, 15)
+    much_later = start + timedelta(days=5)
+    loss, loss_date = sr._reset_daily_loss_if_new_day(
+        daily_loss=999.0, daily_loss_date=start, current_date=much_later
+    )
+    assert loss == 0.0
+    assert loss_date == much_later
+
+
+def test_reset_daily_loss_zero_loss_same_day_stays_zero():
+    from datetime import date
+
+    today = date(2026, 1, 15)
+    loss, loss_date = sr._reset_daily_loss_if_new_day(
+        daily_loss=0.0, daily_loss_date=today, current_date=today
+    )
+    assert loss == 0.0
+    assert loss_date == today
+
+
+def test_reset_daily_loss_defaults_to_real_utc_date_when_not_injected():
+    """Without an injected current_date, the function must fall back
+    to the real current UTC date (used in production; tests above
+    inject a fixed date for determinism)."""
+    today = sr._current_utc_date()
+    loss, loss_date = sr._reset_daily_loss_if_new_day(
+        daily_loss=42.0, daily_loss_date=today
+    )
+    assert loss == 42.0
+    assert loss_date == today

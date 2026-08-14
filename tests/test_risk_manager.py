@@ -51,6 +51,23 @@ def test_init_zero_max_positions_raises():
         RiskManager(account_balance=10_000.0, max_open_positions=0)
 
 
+def test_init_zero_min_position_size_raises():
+    """
+    Regression test for a real gap: min_position_size was never
+    validated at construction. A non-positive value silently disables
+    the minimum-size safety floor in check_position_size() (the
+    `approved_size < self.min_position_size` check can never trigger
+    if min_position_size <= 0), so it must be rejected up front.
+    """
+    with pytest.raises(ValueError, match="min_position_size"):
+        RiskManager(account_balance=10_000.0, min_position_size=0.0)
+
+
+def test_init_negative_min_position_size_raises():
+    with pytest.raises(ValueError, match="min_position_size"):
+        RiskManager(account_balance=10_000.0, min_position_size=-0.001)
+
+
 # ──────────────────────────────────────────────────────────────
 # DAILY LOSS LIMIT
 # ──────────────────────────────────────────────────────────────
