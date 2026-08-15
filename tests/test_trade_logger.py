@@ -368,3 +368,128 @@ def test_log_rotates_file_on_date_change(tmp_log_dir):
     old_file.write_text('{"event": "SIGNAL"}\n', encoding="utf-8")
     files = list(Path(tmp_log_dir).glob("*.jsonl"))
     assert len(files) == 2
+
+
+# ──────────────────────────────────────────────────────────────
+# OPTIONAL DATABASE INTEGRATION
+#
+# db defaults to None everywhere — every test above this section
+# constructs TradeLogger without it, proving JSONL behavior is
+# completely unaffected by this feature's existence. These tests
+# cover the opt-in path specifically.
+# ───────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def db(tmp_path):
+    from core.database import Database
+
+    database = Database(db_path=str(tmp_path / "test.db"))
+    yield database
+    database.close()
+
+
+def test_db_defaults_to_none(tmp_log_dir):
+    tl = TradeLogger(log_dir=tmp_log_dir)
+    assert tl.db is None
+
+
+def test_without_db_jsonl_write_still_happens_and_nothing_extra_occurs(tmp_log_dir):
+    """Regression guard: the JSONL write path must be byte-for-byte
+    unaffected by the db integration existing in the codebase."""
+    tl = TradeLogger(log_dir=tmp_log_dir, session_id="no_db_session")
+    tl.log_session_start(balance=10_000.0)
+    tl.log_order("BUY", price=50_000.0, size=0.001)
+    tl.log_fill("BUY", price=50_000.0, size=0.001)
+    tl.log_trade_closed("LONG", 50_000.0, 51_000.0, 0.001, pnl=1.0, pnl_pct=0.02)
+    tl.log_session_end(balance=10_001.0, total_pnl=1.0, num_trades=1)
+    entries = load_logs(tl)
+    assert len(entries) == 5  # unchanged from pre-db behavior
+
+
+def test_with_db_session_start_is_persisted(tmp_log_dir, db):
+    tl = TradeLogger(
+        log_dir=tmp_log_dir,
+        symbol="BTC",
+        strategy="EMA(9,21)",
+        session_id="db_session",
+        db=db,
+    )
+    tl.log_session_start(balance=10_000.0, extra={"mode": "paper"})
+
+    # JSONL write still happened, unaffected.
+    entries = load_logs(tl)
+    assert entries[0]["action"] == "START"
+
+    # AND the db write happened too.
+    session = db.get_session("db_session")
+    assert session is not None
+    assert session["symbol"] == "BTC"
+    assert session["mode"] == "paper"
+    assert session["starting_balance"] == 10_000.0
+
+
+def test_with_db_session_end_is_persisted(tmp_log_dir, db):
+    tl = TradeLogger(log_dir=tmp_log_dir, session_id="db_session", db=db)
+    tl.log_session_start(balance=10_000.0)
+    tl.log_session_end(balance=10_500.0, total_pnl=500.0, num_trades=2)
+    session = db.get_session("db_session")
+    assert session["ending_balance"] == 10_500.0
+    assert session["total_pnl"] == 500.0
+    assert session["num_trades"] == 2
+
+
+def test_with_db_order_is_persisted(tmp_log_dir, db):
+    tl = TradeLogger(log_dir=tmp_log_dir, symbol="BTC", session_id="db_session", db=db)
+    tl.log_order("BUY", price=50_000.0, size=0.001, order_type="MARKET", cloid="abc")
+    orders = db.list_orders(session_id="db_session")
+    assert len(orders) == 1
+    assert orders[0]["side"] == "BUY"
+    assert orders[0]["price"] == 50_000.0
+    assert orders[0]["cloid"] == "abc"
+
+
+def test_with_db_fill_is_persisted(tmp_log_dir, db):
+    tl = TradeLogger(log_dir=tmp_log_dir, symbol="BTC", session_id="db_session", db=db)
+    tl.log_fill("BUY", price=50_050.0, size=0.001, fee=0.05, oid=999)
+    fills = db.list_fills(session_id="db_session")
+    assert len(fills) == 1
+    assert fills[0]["price"] == 50_050.0
+    assert fills[0]["oid"] == 999
+
+
+def test_with_db_trade_closed_is_persisted(tmp_log_dir, db):
+    tl = TradeLogger(log_dir=tmp_log_dir, symbol="BTC", session_id="db_session", db=db)
+    tl.log_trade_closed(
+        side="LONG",
+        entry_price=50_000.0,
+        exit_price=51_000.0,
+        size=0.001,
+        pnl=1.0,
+        pnl_pct=0.02,
+    )
+    trades = db.list_trades(session_id="db_session")
+    assert len(trades) == 1
+    assert trades[0]["pnl"] == 1.0
+    assert trades[0]["entry_price"] == 50_000.0
+    assert trades[0]["exit_price"] == 51_000.0
+
+
+def test_with_db_signal_and_risk_block_are_not_persisted_to_db(tmp_log_dir, db):
+    """
+    By design, only orders/fills/trades/sessions are persisted to the
+    database (see the audit report) — signals and risk-block events
+    remain JSONL-only, matching what the database schema is actually
+    for (durable trade/session history, not the full diagnostic event
+    stream TradeLogger already covers well as-is).
+    """
+    tl = TradeLogger(log_dir=tmp_log_dir, symbol="BTC", session_id="db_session", db=db)
+    tl.log_signal("BUY", price=50_000.0)
+    tl.log_risk_block(reason="limit hit", requested_size=0.01)
+    # JSONL still has both.
+    entries = load_logs(tl)
+    assert len(entries) == 2
+    # But nothing was added to any db table.
+    assert db.list_orders(session_id="db_session") == []
+    assert db.list_fills(session_id="db_session") == []
+    assert db.list_trades(session_id="db_session") == []
