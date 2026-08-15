@@ -7,6 +7,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, TextIO
 
+from core.database import Database
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,6 +36,14 @@ class TradeLogger:
         symbol:      Asset being traded e.g. "BTC"
         strategy:    Strategy name e.g. "EMA Crossover 9/21"
         session_id:  Unique ID for this trading session (optional)
+        db:          Optional Database instance. When provided, every
+                     log_* call below ALSO persists the same event to
+                     the database, in addition to (never instead of)
+                     the existing JSONL file write. Defaults to None,
+                     matching every existing call site in the
+                     codebase exactly — this parameter is purely
+                     additive and opt-in; omitting it leaves
+                     TradeLogger's behavior completely unchanged.
 
     Usage:
         tl = TradeLogger(log_dir="logs", symbol="BTC", strategy="EMA 9/21")
@@ -42,6 +52,9 @@ class TradeLogger:
         tl.log_order(side="BUY", price=50000.0, size=0.001)
         tl.log_fill(side="BUY", price=50050.0, size=0.001, fee=0.05)
         tl.log_session_end(balance=10_050.0, total_pnl=50.0, num_trades=3)
+
+        # Optional: also persist to a queryable database
+        tl = TradeLogger(log_dir="logs", symbol="BTC", strategy="EMA 9/21", db=Database())
     """
 
     def __init__(
@@ -50,11 +63,13 @@ class TradeLogger:
         symbol: str = "BTC",
         strategy: str = "unknown",
         session_id: str | None = None,
+        db: Database | None = None,
     ) -> None:
         self.log_dir = Path(log_dir)
         self.symbol = symbol
         self.strategy = strategy
         self.session_id = session_id or self._generate_session_id()
+        self.db = db
 
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._current_date: str = ""
@@ -88,6 +103,14 @@ class TradeLogger:
                 **(extra or {}),
             },
         )
+        if self.db is not None:
+            self.db.save_session_start(
+                session_id=self.session_id,
+                symbol=self.symbol,
+                strategy=self.strategy,
+                mode=str((extra or {}).get("mode", "unknown")),
+                starting_balance=balance,
+            )
 
     def log_session_end(
         self,
@@ -109,6 +132,13 @@ class TradeLogger:
                 **(extra or {}),
             },
         )
+        if self.db is not None:
+            self.db.save_session_end(
+                session_id=self.session_id,
+                ending_balance=balance,
+                total_pnl=total_pnl,
+                num_trades=num_trades,
+            )
 
     def log_signal(
         self,
@@ -167,6 +197,16 @@ class TradeLogger:
                 **(extra or {}),
             },
         )
+        if self.db is not None:
+            self.db.save_order(
+                session_id=self.session_id,
+                symbol=self.symbol,
+                side=side,
+                price=price,
+                size=size,
+                order_type=order_type,
+                cloid=cloid,
+            )
 
     def log_fill(
         self,
@@ -203,6 +243,17 @@ class TradeLogger:
                 **(extra or {}),
             },
         )
+        if self.db is not None:
+            self.db.save_fill(
+                session_id=self.session_id,
+                symbol=self.symbol,
+                side=side,
+                price=price,
+                size=size,
+                fee=fee,
+                oid=oid,
+                cloid=cloid,
+            )
 
     def log_trade_closed(
         self,
@@ -242,6 +293,18 @@ class TradeLogger:
                 **(extra or {}),
             },
         )
+        if self.db is not None:
+            self.db.save_trade(
+                session_id=self.session_id,
+                symbol=self.symbol,
+                side=side,
+                entry_price=entry_price,
+                exit_price=exit_price,
+                size=size,
+                pnl=pnl,
+                pnl_pct=pnl_pct,
+                entry_time=entry_time,
+            )
 
     def log_cancel(
         self,

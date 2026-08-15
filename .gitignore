@@ -39,6 +39,11 @@ coverage.xml
 logs/
 *.log
 
+# Database (SQLite persistence layer)
+*.db
+*.db-journal
+storage/
+
 # VSCode
 .vscode/
 
