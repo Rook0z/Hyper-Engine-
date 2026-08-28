@@ -22,6 +22,8 @@ from __future__ import annotations
 import logging
 
 from core.config import settings
+from core.database import Database
+from core.trade_logger import TradeLogger
 from execution.testnet_executor import (
     TestnetExecutionError,
     TestnetExecutor,
@@ -85,13 +87,99 @@ def main() -> None:
 
     # 6-13. BUY -> verify -> SELL -> verify, fully handled by the
     # executor (see execution/testnet_executor.py for the safety
-    # guards and full lifecycle logging).
+    # guards and full lifecycle logging). This does not change or wrap
+    # that logic in any way — we only persist its result through the
+    # same TradeLogger/Database the dashboard already reads, so a
+    # smoke test run shows up in the dashboard exactly like a
+    # strategy_runner-driven trade would.
+    trade_log = TradeLogger(
+        log_dir=settings.log_dir,
+        symbol=settings.symbol,
+        strategy="SmokeTest",
+        db=Database(),
+    )
+    trade_log.log_session_start(
+        balance=settings.initial_capital,
+        extra={"strategy": "SmokeTest", "mode": "smoke_test"},
+    )
+
     try:
         buy_result, sell_result = executor.run_smoke_cycle(size=size)
     except TestnetExecutionError as e:
         logger.error("Smoke test aborted: %s", e)
         print(f"\nABORTED: {e}\n")
+        trade_log.log_error(
+            str(e), context={"type": "TestnetExecutionError", "stage": "run_smoke_cycle"}
+        )
+        trade_log.log_session_end(
+            balance=settings.initial_capital, total_pnl=0.0, num_trades=0
+        )
         return
+
+    trade_log.log_order("BUY", price=price, size=size, order_type="MARKET")
+    if buy_result.status == "filled":
+        trade_log.log_fill(
+            "BUY",
+            price=buy_result.avg_price,
+            size=buy_result.filled_size,
+            oid=buy_result.oid,
+        )
+    if sell_result is not None:
+        trade_log.log_order(
+            "SELL",
+            price=buy_result.avg_price,
+            size=buy_result.filled_size,
+            order_type="MARKET",
+        )
+        if sell_result.status == "filled":
+            trade_log.log_fill(
+                "SELL",
+                price=sell_result.avg_price,
+                size=sell_result.filled_size,
+                oid=sell_result.oid,
+            )
+
+    buy_filled = buy_result.status == "filled"
+    sell_filled = sell_result is not None and sell_result.status == "filled"
+
+    # LEG ISOLATION, same rule as live_testnet_trade(): a completed
+    # "trade" row is only ever written when BOTH legs are confirmed
+    # filled — never fabricated from a BUY-only or incomplete cycle.
+    total_pnl = 0.0
+    num_trades = 0
+    if buy_filled and sell_filled:
+        assert sell_result is not None  # sell_filled already implies this
+        total_pnl = (
+            sell_result.avg_price - buy_result.avg_price
+        ) * buy_result.filled_size
+        pnl_pct = (
+            (sell_result.avg_price - buy_result.avg_price) / buy_result.avg_price
+        )
+        num_trades = 1
+        trade_log.log_trade_closed(
+            side="LONG",
+            entry_price=buy_result.avg_price,
+            exit_price=sell_result.avg_price,
+            size=buy_result.filled_size,
+            pnl=total_pnl,
+            pnl_pct=pnl_pct,
+        )
+    elif buy_filled and not sell_filled:
+        trade_log.log_error(
+            f"SELL unresolved: {sell_result.status if sell_result else 'not submitted'}",
+            context={"stage": "smoke_test", "buy_oid": buy_result.oid},
+        )
+    else:
+        trade_log.log_error(
+            f"BUY not filled: {buy_result.status}",
+            context={"stage": "smoke_test", "buy_oid": buy_result.oid},
+        )
+
+    trade_log.log_session_end(
+        balance=settings.initial_capital + total_pnl,
+        total_pnl=total_pnl,
+        num_trades=num_trades,
+    )
 
     print("\n" + "=" * 65)
     print("  RESULT")
