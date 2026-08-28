@@ -25,12 +25,39 @@ mypy = "^2.1.0"
 pandas-stubs = "^3.0.0"
 msgpack-types = {version = "^0.7.0", python = ">=3.12,<4"}
 
+[tool.poetry.group.dashboard]
+optional = true
+
+[tool.poetry.group.dashboard.dependencies]
+streamlit = "^1.38"
+
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+filterwarnings = [
+    # TestnetSafetyError / TestnetExecutionError / TestnetExecutor all
+    # start with "Test", pytest's default collection pattern — when
+    # tests/test_testnet_executor.py imports them, pytest tries (and
+    # correctly declines, since they have __init__ constructors) to
+    # collect them as test classes. Cosmetic only; nothing is actually
+    # skipped that should have run. Renaming production exception/
+    # class names to dodge a test-runner's naming convention would be
+    # the wrong fix, so the warning is silenced here instead.
+    "ignore::pytest.PytestCollectionWarning",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# app.py must insert src/ onto sys.path BEFORE importing core.database
+# and dashboard.views (Streamlit only auto-adds the script's own
+# directory to sys.path, not src/ — see app.py's own docstring for
+# the full explanation). That ordering is required, not accidental,
+# so E402 ("module level import not at top of file") is a false
+# positive here specifically, not a general license to reorder
+# imports elsewhere in the project.
+"src/dashboard/app.py" = ["E402"]
 
 [tool.mypy]
 # The project has a stray src/__init__.py (making "src" itself a
@@ -50,3 +77,16 @@ pythonpath = ["src"]
 mypy_path = "src"
 explicit_package_bases = true
 namespace_packages = true
+
+[[tool.mypy.overrides]]
+# Streamlit lives in an OPTIONAL dependency group (poetry install
+# --with dashboard), so the default CI environment (plain `poetry
+# install`) never has it — these modules are pure Streamlit UI
+# rendering with no logic of their own to type-check (all real logic
+# lives in dashboard/data.py, which has no Streamlit import and is
+# checked normally, like every other module). This is a narrowly-
+# scoped, two-path ignore, not a global ignore_missing_imports —
+# consistent with this project's established policy of never
+# blanket-ignoring missing stubs.
+module = ["dashboard.app", "dashboard.views.*"]
+ignore_missing_imports = true
