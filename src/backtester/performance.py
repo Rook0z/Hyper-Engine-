@@ -261,6 +261,15 @@ class PerformanceAnalyser:
 
         Formula: max((peak - trough) / peak) across all points.
 
+        Guards against peak == 0 (returns 0.0 for that point rather
+        than raising ZeroDivisionError) — the same convention already
+        used by max_drawdown_duration() below. This matters beyond
+        BacktestResult.equity_curve (which always starts at a positive
+        initial_capital): dashboard.data.get_live_trades_performance()
+        builds a *cumulative-PnL* equity curve starting at 0.0, so if
+        the very first live/paper trade is a loss, peak stays at 0.0
+        and the naive (peak - value) / peak would divide by zero.
+
         Returns:
             Max drawdown as positive fraction. 0.20 = 20% drawdown.
         """
@@ -271,7 +280,7 @@ class PerformanceAnalyser:
         for value in equity_curve[1:]:
             if value > peak:
                 peak = value
-            dd = (peak - value) / peak
+            dd = (peak - value) / peak if peak != 0 else 0.0
             if dd > max_dd:
                 max_dd = dd
         return max_dd
