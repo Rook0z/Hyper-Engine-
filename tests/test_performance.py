@@ -130,6 +130,18 @@ def test_max_drawdown_too_few_raises(analyser):
         analyser.max_drawdown([100.0])
 
 
+def test_max_drawdown_zero_start_first_trade_loss_no_crash(analyser):
+    equity = [0.0, -5.0, -8.0]
+    result = analyser.max_drawdown(equity)
+    assert result == 0.0
+
+
+def test_max_drawdown_zero_start_then_recovers(analyser):
+    equity = [0.0, 10.0, 4.0]
+    result = analyser.max_drawdown(equity)
+    assert math.isclose(result, (10.0 - 4.0) / 10.0, rel_tol=1e-9)
+
+
 # ──────────────────────────────────────────────────────────────
 # PROFIT FACTOR
 # ──────────────────────────────────────────────────────────────
