@@ -29,8 +29,13 @@ from backtester.walk_forward import (
     generate_walk_forward_windows,
 )
 from risk.risk_manager import RiskManager
+from core.database import Database
 from core.trade_logger import TradeLogger
-from execution.testnet_executor import TestnetExecutionError, TestnetExecutor
+from execution.testnet_executor import (
+    TestnetExecutionError,
+    TestnetExecutor,
+    TestnetSafetyError,
+)
 
 load_dotenv()
 
@@ -248,11 +253,13 @@ def _log_timestamp_gaps(candles: list[list]) -> None:
 # ──────────────────────────────────────────────────────────────
 # STRATEGY FACTORY
 # ──────────────────────────────────────────────────────────────
+"""
+Every strategy class this runner knows how to build, purely from settings. 
+Used both to build the strategies that compete in 
+backtest_all() and to build a brand-new instance of the winning
+strategy's class for paper trading — see _build_strategy().
 
-# Every strategy class this runner knows how to build, purely from
-# settings. Used both to build the strategies that compete in
-# backtest_all() and to build a brand-new instance of the winning
-# strategy's class for paper trading — see _build_strategy().
+"""
 STRATEGY_CLASSES: tuple[type[BaseStrategy], ...] = (
     EMAStrategy,
     RSIStrategy,
@@ -346,7 +353,7 @@ def backtest_all(
 
 # ──────────────────────────────────────────────────────────────
 # OUT-OF-SAMPLE TEST
-#
+
 # Strategy SELECTION uses ONLY the in-sample split (via backtest_all(),
 # unchanged, called with in_sample candles only). The winning
 # strategy's out-of-sample evaluation then uses a completely FRESH
@@ -618,6 +625,7 @@ def paper_trade(
         log_dir=settings.log_dir,
         symbol=settings.symbol,
         strategy=strategy.name,
+        db=Database(),
     )
     risk = RiskManager(
         account_balance=settings.initial_capital,
@@ -868,6 +876,7 @@ def live_testnet_trade(
         log_dir=settings.log_dir,
         symbol=settings.symbol,
         strategy=strategy.name,
+        db=Database(),
     )
     risk = RiskManager(
         account_balance=settings.initial_capital,
@@ -1118,7 +1127,23 @@ def live_testnet_trade(
 
 def run_pipeline() -> None:
     """
-    Full pipeline: connect → fetch → clean → backtest → compare → paper trade
+    Full pipeline: connect → fetch → clean → backtest → compare → trade.
+
+    The final stage is EITHER paper_trade() OR live_testnet_trade() —
+    both already-existing, already-tested functions, never a new
+    execution path. Which one runs is controlled entirely by the
+    existing master safety switch settings.enable_testnet_live_execution
+    (ENABLE_TESTNET_LIVE_EXECUTION in .env, defaults False):
+
+      - False (default): paper_trade() — simulated, no real orders.
+      - True: live_testnet_trade() — REAL Hyperliquid TESTNET orders,
+        via the same TestnetExecutor / run_smoke_cycle-style
+        confirmed-fill logic already proven out by
+        execution/smoke_test.py. TestnetExecutor's own constructor
+        independently re-verifies IS_MAINNET=False and the testnet
+        base URL before allowing any order to be placed — this
+        function does not duplicate that check, it just surfaces the
+        resulting TestnetSafetyError cleanly if it fires.
     """
     print("\n" + "=" * 65)
     print("  HYPER-ENGINE STRATEGY PIPELINE")
@@ -1139,36 +1164,53 @@ def run_pipeline() -> None:
 
     if best_report.sharpe_ratio < settings.min_sharpe_to_trade:
         print(
-            f"  No paper trade — best Sharpe {best_report.sharpe_ratio:.4f} "
+            f"  No trade — best Sharpe {best_report.sharpe_ratio:.4f} "
             f"< minimum {settings.min_sharpe_to_trade}"
         )
         logger.warning(
-            "Best Sharpe %.4f below minimum %.1f — no paper trading.",
+            "Best Sharpe %.4f below minimum %.1f — no trading.",
             best_report.sharpe_ratio,
             settings.min_sharpe_to_trade,
         )
         return
 
     if best_result.num_trades == 0:
-        print("  No paper trade — strategy had zero trades on backtest data.")
+        print("  No trade — strategy had zero trades on backtest data.")
         logger.warning("Best strategy had zero trades.")
         return
 
     # IMPORTANT: never hand the backtested strategy instance to
-    # paper_trade(). It ran through the full backtest candle history,
-    # so its internal signal-dedup state (_last_signal /
-    # _last_crossover) reflects wherever the backtest happened to end —
-    # not a fresh "no signal yet" state. paper_trade()'s in_position
-    # always starts False, so reusing that mutated instance can
-    # suppress the first live signal or fire a SELL with no open
-    # position to close. Build a brand-new instance of the same class
-    # with the same configuration instead, so the backtester and the
-    # paper trader never share mutable strategy state.
+    # paper_trade() / live_testnet_trade(). It ran through the full
+    # backtest candle history, so its internal signal-dedup state
+    # (_last_signal / _last_crossover) reflects wherever the backtest
+    # happened to end — not a fresh "no signal yet" state. Both
+    # trading functions start in_position at False, so reusing that
+    # mutated instance can suppress the first live signal or fire a
+    # SELL with no open position to close. Build a brand-new instance
+    # of the same class with the same configuration instead, so the
+    # backtester and the live/paper trader never share mutable
+    # strategy state.
     fresh_strategy = _build_strategy(type(best_strategy))
 
     print(f"  Selected : {fresh_strategy.name}")
-    print(f"  Starting {settings.run_hours}h paper trade...\n")
-    paper_trade(fresh_strategy, ohlcv)
+
+    if settings.enable_testnet_live_execution:
+        print(
+            f"  ENABLE_TESTNET_LIVE_EXECUTION=true — starting REAL testnet "
+            f"execution ({settings.run_hours}h)...\n"
+        )
+        try:
+            executor = TestnetExecutor(
+                client=client, symbol_map=symbol_map, symbol=settings.symbol
+            )
+        except TestnetSafetyError as e:
+            print(f"  ABORTED — testnet execution safety check failed: {e}")
+            logger.error("Refusing live testnet execution: %s", e)
+            return
+        live_testnet_trade(fresh_strategy, ohlcv, executor)
+    else:
+        print(f"  Starting {settings.run_hours}h paper trade...\n")
+        paper_trade(fresh_strategy, ohlcv)
 
 
 def _now_iso() -> str:
