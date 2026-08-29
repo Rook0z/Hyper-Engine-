@@ -133,21 +133,37 @@ class TestnetExecutor:
         signing_address = client.auth.wallet.address.lower()
         read_address = client.auth.account_address.lower()
         addresses_match = signing_address == read_address
-        logger.warning(
-            "TESTNET ADDRESS CHECK: signing_wallet=%s (derived from "
-            "HL_PRIVATE_KEY) | read_address=%s (HL_ACCOUNT_ADDRESS, used for "
-            "orderStatus/userFills/positions) | MATCH=%s%s",
-            signing_address,
-            read_address,
-            addresses_match,
-            ""
-            if addresses_match
-            else " <-- MISMATCH: reads will query a DIFFERENT account than "
-            "the one that actually places orders. If HL_PRIVATE_KEY is an "
-            "agent/API wallet, HL_ACCOUNT_ADDRESS must be set to the master "
-            "account address it trades on behalf of, not the agent's own "
-            "address.",
-        )
+        if addresses_match:
+            logger.info(
+                "TESTNET ACCOUNT: signing_wallet=%s (derived from "
+                "HL_PRIVATE_KEY) trades and reads (orderStatus/userFills/"
+                "positions) as the same account — no agent wallet in use.",
+                signing_address,
+            )
+        else:
+            # A different signing_wallet and read_address is the EXPECTED,
+            # correctly-configured shape for an agent/API wallet setup
+            # (HL_PRIVATE_KEY = the approved agent key, HL_ACCOUNT_ADDRESS
+            # = the master account it trades on behalf of) — not itself a
+            # problem, so this logs as informational rather than a
+            # warning. It's still logged, and still names both addresses
+            # explicitly, because the one thing this can't distinguish
+            # from a correctly-configured agent wallet is HL_ACCOUNT_ADDRESS
+            # being set to the wrong address by mistake — if this doesn't
+            # match an agent-wallet pairing you actually set up on
+            # Hyperliquid (Settings -> API Wallets), fix HL_ACCOUNT_ADDRESS
+            # before trading.
+            logger.info(
+                "TESTNET ACCOUNT: operating in agent-wallet mode — "
+                "signing_wallet=%s (agent, derived from HL_PRIVATE_KEY) "
+                "submits orders on behalf of read_address=%s (master "
+                "account, HL_ACCOUNT_ADDRESS — used for orderStatus/"
+                "userFills/positions). If you did not set this agent wallet "
+                "up yourself on Hyperliquid (Settings -> API Wallets), "
+                "verify HL_ACCOUNT_ADDRESS is correct before trading.",
+                signing_address,
+                read_address,
+            )
 
         logger.warning(
             "TestnetExecutor constructed for %s — REAL TESTNET orders are "
