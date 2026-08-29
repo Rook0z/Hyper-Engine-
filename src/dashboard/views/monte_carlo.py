@@ -33,7 +33,9 @@ def render(db: Database) -> None:
         st.error("Result not found.")
         return
 
-    st.subheader(f"{summary['method'].title()} — {summary['num_simulations']} simulations")
+    st.subheader(
+        f"{summary['method'].title()} — {summary['num_simulations']} simulations"
+    )
 
     cols = st.columns(3)
     cols[0].metric("Original Final Equity", f"{summary['original_final_equity']:.2f}")

@@ -79,7 +79,7 @@ def _render_out_of_sample(summary: dict) -> None:
         st.metric("Sharpe", f"{oos['sharpe_ratio']:.4f}")
 
 
-def _render_walk_forward(report) -> None: 
+def _render_walk_forward(report) -> None:
     cols = st.columns(4)
     cols[0].metric("Windows", report.num_windows)
     cols[1].metric("Total Test Trades", report.total_test_trades)

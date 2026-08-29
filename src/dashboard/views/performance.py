@@ -43,8 +43,12 @@ def render(db: Database) -> None:
                 st.line_chart(perf["equity_curve"])
 
     with tab_backtest:
-        strategy_name = st.text_input("Strategy name filter (optional)", value="") or None
-        symbol = st.text_input("Symbol filter (optional)", value="", key="bt_symbol") or None
+        strategy_name = (
+            st.text_input("Strategy name filter (optional)", value="") or None
+        )
+        symbol = (
+            st.text_input("Symbol filter (optional)", value="", key="bt_symbol") or None
+        )
         result = data.get_latest_backtest_performance(
             db, strategy_name=strategy_name, symbol=symbol
         )
