@@ -109,7 +109,8 @@ def main() -> None:
         logger.error("Smoke test aborted: %s", e)
         print(f"\nABORTED: {e}\n")
         trade_log.log_error(
-            str(e), context={"type": "TestnetExecutionError", "stage": "run_smoke_cycle"}
+            str(e),
+            context={"type": "TestnetExecutionError", "stage": "run_smoke_cycle"},
         )
         trade_log.log_session_end(
             balance=settings.initial_capital, total_pnl=0.0, num_trades=0
@@ -152,9 +153,7 @@ def main() -> None:
         total_pnl = (
             sell_result.avg_price - buy_result.avg_price
         ) * buy_result.filled_size
-        pnl_pct = (
-            (sell_result.avg_price - buy_result.avg_price) / buy_result.avg_price
-        )
+        pnl_pct = (sell_result.avg_price - buy_result.avg_price) / buy_result.avg_price
         num_trades = 1
         trade_log.log_trade_closed(
             side="LONG",
