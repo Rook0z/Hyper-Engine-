@@ -81,12 +81,24 @@ namespace_packages = true
 [[tool.mypy.overrides]]
 # Streamlit lives in an OPTIONAL dependency group (poetry install
 # --with dashboard), so the default CI environment (plain `poetry
-# install`) never has it — these modules are pure Streamlit UI
-# rendering with no logic of their own to type-check (all real logic
-# lives in dashboard/data.py, which has no Streamlit import and is
-# checked normally, like every other module). This is a narrowly-
-# scoped, two-path ignore, not a global ignore_missing_imports —
-# consistent with this project's established policy of never
-# blanket-ignoring missing stubs.
+# install`) never has it installed. This targets the missing PACKAGE
+# itself (streamlit) rather than only the modules that import it —
+# ignore_missing_imports on an importING module only suppresses
+# errors about resolving *that* module from elsewhere, not missing-
+# import errors for packages it imports internally. Targeting
+# streamlit directly is what actually silences "Cannot find
+# implementation or library stub for module named 'streamlit'"
+# wherever it's imported (dashboard/app.py, dashboard/views/*.py).
+module = ["streamlit", "streamlit.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Belt-and-suspenders: if some OTHER file imports dashboard.app or
+# dashboard.views.* directly (rather than importing streamlit), this
+# additionally suppresses any resulting "cannot find implementation"
+# error for THAT import, on the same optional-dependency reasoning as
+# above. dashboard/data.py is deliberately NOT listed here — it has
+# no Streamlit import and is checked normally, like every other
+# module in the project.
 module = ["dashboard.app", "dashboard.views.*"]
 ignore_missing_imports = true
