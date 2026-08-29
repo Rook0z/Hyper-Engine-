@@ -24,7 +24,6 @@ from dashboard import data
 from core.config import settings
 
 
-
 @pytest.fixture
 def db(tmp_path):
     database = Database(db_path=str(tmp_path / "test_dashboard.db"))
@@ -34,13 +33,25 @@ def db(tmp_path):
 
 def make_backtest_result(pnl=5.0):
     trade = Trade(
-        entry_time=1000, exit_time=2000, entry_price=100.0, exit_price=105.0,
-        size=1.0, pnl=pnl, pnl_pct=pnl / 100.0,
+        entry_time=1000,
+        exit_time=2000,
+        entry_price=100.0,
+        exit_price=105.0,
+        size=1.0,
+        pnl=pnl,
+        pnl_pct=pnl / 100.0,
     )
     return BacktestResult(
-        trades=[trade], total_pnl=pnl, win_rate=1.0, profit_factor=float("inf"),
-        max_drawdown=0.0, num_trades=1, equity_curve=[10_000.0, 10_000.0 + pnl],
-        strategy_name="EMA(9,21)", symbol="BTC", candles_tested=100,
+        trades=[trade],
+        total_pnl=pnl,
+        win_rate=1.0,
+        profit_factor=float("inf"),
+        max_drawdown=0.0,
+        num_trades=1,
+        equity_curve=[10_000.0, 10_000.0 + pnl],
+        strategy_name="EMA(9,21)",
+        symbol="BTC",
+        candles_tested=100,
     )
 
 
@@ -72,7 +83,10 @@ def test_get_overview_empty_db_returns_zeroed_summary(db):
 
 def test_get_current_session_returns_most_recent(db):
     db.save_session_start(
-        session_id="s1", symbol="BTC", strategy="EMA", mode="paper",
+        session_id="s1",
+        symbol="BTC",
+        strategy="EMA",
+        mode="paper",
         starting_balance=10_000.0,
     )
     session = data.get_current_session(db)
@@ -82,12 +96,24 @@ def test_get_current_session_returns_most_recent(db):
 
 def test_get_overview_computes_win_loss_counts_and_win_rate(db):
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=105.0, size=1.0, pnl=5.0, pnl_pct=0.05,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=105.0,
+        size=1.0,
+        pnl=5.0,
+        pnl_pct=0.05,
     )
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=98.0, size=1.0, pnl=-2.0, pnl_pct=-0.02,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=98.0,
+        size=1.0,
+        pnl=-2.0,
+        pnl_pct=-0.02,
     )
     overview = data.get_overview(db)
     assert overview["num_trades"] == 2
@@ -103,8 +129,14 @@ def test_get_overview_win_rate_matches_performance_analyser_directly(db):
     silently diverge."""
     for pnl in [5.0, -2.0, 3.0, -1.0]:
         db.save_trade(
-            session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-            exit_price=100.0 + pnl, size=1.0, pnl=pnl, pnl_pct=pnl / 100.0,
+            session_id="s1",
+            symbol="BTC",
+            side="LONG",
+            entry_price=100.0,
+            exit_price=100.0 + pnl,
+            size=1.0,
+            pnl=pnl,
+            pnl_pct=pnl / 100.0,
         )
     overview = data.get_overview(db)
     expected = PerformanceAnalyser().win_rate([5.0, -2.0, 3.0, -1.0])
@@ -114,8 +146,14 @@ def test_get_overview_win_rate_matches_performance_analyser_directly(db):
 def test_get_overview_recent_trades_capped_at_ten(db):
     for i in range(15):
         db.save_trade(
-            session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-            exit_price=101.0, size=1.0, pnl=1.0, pnl_pct=0.01,
+            session_id="s1",
+            symbol="BTC",
+            side="LONG",
+            entry_price=100.0,
+            exit_price=101.0,
+            size=1.0,
+            pnl=1.0,
+            pnl_pct=0.01,
         )
     overview = data.get_overview(db)
     assert len(overview["recent_trades"]) == 10
@@ -123,12 +161,24 @@ def test_get_overview_recent_trades_capped_at_ten(db):
 
 def test_get_overview_can_scope_to_one_session(db):
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=105.0, size=1.0, pnl=5.0, pnl_pct=0.05,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=105.0,
+        size=1.0,
+        pnl=5.0,
+        pnl_pct=0.05,
     )
     db.save_trade(
-        session_id="s2", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=90.0, size=1.0, pnl=-10.0, pnl_pct=-0.1,
+        session_id="s2",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=90.0,
+        size=1.0,
+        pnl=-10.0,
+        pnl_pct=-0.1,
     )
     overview = data.get_overview(db, session_id="s1")
     assert overview["num_trades"] == 1
@@ -146,12 +196,24 @@ def test_list_trades_view_empty_db(db):
 
 def test_list_trades_view_filters_by_symbol(db):
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=105.0, size=1.0, pnl=5.0, pnl_pct=0.05,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=105.0,
+        size=1.0,
+        pnl=5.0,
+        pnl_pct=0.05,
     )
     db.save_trade(
-        session_id="s1", symbol="ETH", side="LONG", entry_price=3_000.0,
-        exit_price=3_100.0, size=1.0, pnl=100.0, pnl_pct=0.033,
+        session_id="s1",
+        symbol="ETH",
+        side="LONG",
+        entry_price=3_000.0,
+        exit_price=3_100.0,
+        size=1.0,
+        pnl=100.0,
+        pnl_pct=0.033,
     )
     result = data.list_trades_view(db, symbol="BTC")
     assert len(result) == 1
@@ -160,12 +222,24 @@ def test_list_trades_view_filters_by_symbol(db):
 
 def test_list_trades_view_filters_by_side(db):
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=105.0, size=1.0, pnl=5.0, pnl_pct=0.05,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=105.0,
+        size=1.0,
+        pnl=5.0,
+        pnl_pct=0.05,
     )
     db.save_trade(
-        session_id="s1", symbol="BTC", side="SHORT", entry_price=105.0,
-        exit_price=100.0, size=1.0, pnl=5.0, pnl_pct=0.05,
+        session_id="s1",
+        symbol="BTC",
+        side="SHORT",
+        entry_price=105.0,
+        exit_price=100.0,
+        size=1.0,
+        pnl=5.0,
+        pnl_pct=0.05,
     )
     result = data.list_trades_view(db, side="SHORT")
     assert len(result) == 1
@@ -174,34 +248,62 @@ def test_list_trades_view_filters_by_side(db):
 
 def test_list_trades_view_filters_by_date_range(db):
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=105.0, size=1.0, pnl=5.0, pnl_pct=0.05,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=105.0,
+        size=1.0,
+        pnl=5.0,
+        pnl_pct=0.05,
         exit_time="2026-01-01T00:00:00+00:00",
     )
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=110.0, size=1.0, pnl=10.0, pnl_pct=0.1,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=110.0,
+        size=1.0,
+        pnl=10.0,
+        pnl_pct=0.1,
         exit_time="2026-06-01T00:00:00+00:00",
     )
-    result = data.list_trades_view(
-        db, start_time="2026-05-01", end_time="2026-12-31"
-    )
+    result = data.list_trades_view(db, start_time="2026-05-01", end_time="2026-12-31")
     assert len(result) == 1
     assert result[0]["pnl"] == 10.0
 
 
 def test_list_trades_view_combines_multiple_filters(db):
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=105.0, size=1.0, pnl=5.0, pnl_pct=0.05,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=105.0,
+        size=1.0,
+        pnl=5.0,
+        pnl_pct=0.05,
     )
     db.save_trade(
-        session_id="s1", symbol="ETH", side="LONG", entry_price=100.0,
-        exit_price=105.0, size=1.0, pnl=5.0, pnl_pct=0.05,
+        session_id="s1",
+        symbol="ETH",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=105.0,
+        size=1.0,
+        pnl=5.0,
+        pnl_pct=0.05,
     )
     db.save_trade(
-        session_id="s2", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=95.0, size=1.0, pnl=-5.0, pnl_pct=-0.05,
+        session_id="s2",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=95.0,
+        size=1.0,
+        pnl=-5.0,
+        pnl_pct=-0.05,
     )
     result = data.list_trades_view(db, symbol="BTC", session_id="s1")
     assert len(result) == 1
@@ -237,7 +339,9 @@ def test_list_fills_view_returns_saved_fills(db):
 
 def test_list_orders_fills_view_filters_by_session(db):
     db.save_order(session_id="s1", symbol="BTC", side="BUY", price=50_000.0, size=0.001)
-    db.save_order(session_id="s2", symbol="BTC", side="SELL", price=51_000.0, size=0.001)
+    db.save_order(
+        session_id="s2", symbol="BTC", side="SELL", price=51_000.0, size=0.001
+    )
     assert len(data.list_orders_view(db, session_id="s1")) == 1
 
 
@@ -284,8 +388,14 @@ def test_get_live_trades_performance_empty_db(db):
 def test_get_live_trades_performance_computes_via_analyser(db):
     for pnl, pct in [(5.0, 0.05), (-2.0, -0.02), (3.0, 0.03)]:
         db.save_trade(
-            session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-            exit_price=100.0 + pnl, size=1.0, pnl=pnl, pnl_pct=pct,
+            session_id="s1",
+            symbol="BTC",
+            side="LONG",
+            entry_price=100.0,
+            exit_price=100.0 + pnl,
+            size=1.0,
+            pnl=pnl,
+            pnl_pct=pct,
         )
     perf = data.get_live_trades_performance(db)
     assert perf["num_trades"] == 3
@@ -296,13 +406,25 @@ def test_get_live_trades_performance_computes_via_analyser(db):
 
 def test_get_live_trades_performance_equity_curve_starts_at_zero_and_accumulates(db):
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=105.0, size=1.0, pnl=5.0, pnl_pct=0.05,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=105.0,
+        size=1.0,
+        pnl=5.0,
+        pnl_pct=0.05,
         exit_time="2026-01-01T00:00:00+00:00",
     )
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=97.0, size=1.0, pnl=-3.0, pnl_pct=-0.03,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=97.0,
+        size=1.0,
+        pnl=-3.0,
+        pnl_pct=-0.03,
         exit_time="2026-01-02T00:00:00+00:00",
     )
     perf = data.get_live_trades_performance(db)
@@ -349,9 +471,12 @@ def test_get_analysis_result_detail_walk_forward_rehydrates_aggregates(db):
         test=[[2000, 1, 1, 1, 1, 1]],
     )
     window_result = WalkForwardWindowResult(
-        window=window, strategy_name="EMA(9,21)",
-        train_result=result_a, train_report=report_a,
-        test_result=result_b, test_report=report_b,
+        window=window,
+        strategy_name="EMA(9,21)",
+        train_result=result_a,
+        train_report=report_a,
+        test_result=result_b,
+        test_report=report_b,
     )
     wf_report = WalkForwardReport(window_results=[window_result])
     result_id = db.save_walk_forward_result("EMA(9,21)", "BTC", wf_report)
@@ -367,12 +492,17 @@ def test_get_analysis_result_detail_walk_forward_rehydrates_aggregates(db):
 
 def test_get_analysis_result_detail_monte_carlo_rehydrates(db):
     sim = MonteCarloSimulationResult(
-        equity_curve=[10_000.0, 10_050.0], final_equity=10_050.0,
-        total_pnl=50.0, max_drawdown=0.001,
+        equity_curve=[10_000.0, 10_050.0],
+        final_equity=10_050.0,
+        total_pnl=50.0,
+        max_drawdown=0.001,
     )
     mc_report = MonteCarloReport(
-        num_simulations=1, method="shuffle", initial_capital=10_000.0,
-        original_final_equity=10_050.0, original_max_drawdown=0.001,
+        num_simulations=1,
+        method="shuffle",
+        initial_capital=10_000.0,
+        original_final_equity=10_050.0,
+        original_max_drawdown=0.001,
         simulations=[sim],
     )
     result_id = db.save_monte_carlo_result("EMA(9,21)", "BTC", mc_report)
@@ -402,14 +532,19 @@ def test_get_monte_carlo_summary_none_for_wrong_result_type(db):
 def test_get_monte_carlo_summary_includes_all_percentiles_and_probability(db):
     sims = [
         MonteCarloSimulationResult(
-            equity_curve=[10_000.0, fe], final_equity=fe, total_pnl=fe - 10_000.0,
+            equity_curve=[10_000.0, fe],
+            final_equity=fe,
+            total_pnl=fe - 10_000.0,
             max_drawdown=dd,
         )
         for fe, dd in [(9_000.0, 0.1), (10_000.0, 0.05), (11_000.0, 0.02)]
     ]
     mc_report = MonteCarloReport(
-        num_simulations=3, method="bootstrap", initial_capital=10_000.0,
-        original_final_equity=10_500.0, original_max_drawdown=0.03,
+        num_simulations=3,
+        method="bootstrap",
+        initial_capital=10_000.0,
+        original_final_equity=10_500.0,
+        original_max_drawdown=0.03,
         simulations=sims,
     )
     result_id = db.save_monte_carlo_result("EMA(9,21)", "BTC", mc_report)
@@ -450,18 +585,36 @@ def test_get_risk_overview_sums_only_todays_losing_trades(db):
     yesterday_iso = "2020-01-01T00:00:00+00:00"
 
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=95.0, size=1.0, pnl=-5.0, pnl_pct=-0.05,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=95.0,
+        size=1.0,
+        pnl=-5.0,
+        pnl_pct=-0.05,
         exit_time=f"{today}T12:00:00+00:00",
     )
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=105.0, size=1.0, pnl=5.0, pnl_pct=0.05,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=105.0,
+        size=1.0,
+        pnl=5.0,
+        pnl_pct=0.05,
         exit_time=f"{today}T13:00:00+00:00",
     )  # winning trade today, must not count toward realized LOSS
     db.save_trade(
-        session_id="s1", symbol="BTC", side="LONG", entry_price=100.0,
-        exit_price=80.0, size=1.0, pnl=-20.0, pnl_pct=-0.2,
+        session_id="s1",
+        symbol="BTC",
+        side="LONG",
+        entry_price=100.0,
+        exit_price=80.0,
+        size=1.0,
+        pnl=-20.0,
+        pnl_pct=-0.2,
         exit_time=yesterday_iso,
     )  # loss, but not today — must not count
 
